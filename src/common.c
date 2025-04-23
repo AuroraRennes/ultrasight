@@ -330,3 +330,69 @@ static int disable_cs_trace(bool disable_all)
   return ret;
 }
 
+/**
+* Fetch the trace data from the ETB
+*/
+int fetch_trace(void)
+{
+  int ret;
+  cs_device_t etb;
+  int len;
+  size_t buf_remain;
+  void *new_trace_buf;
+  size_t new_trace_buf_size;
+  int n;
+
+  ret = -1;
+
+  /* Acquire trace mutex */
+  pthread_mutex_lock(&trace_mutex);
+
+  /* Get the number of bytes that have not yet been destructively read from the buffer */
+  etb = devices.etb;
+  len = cs_get_buffer_unread_bytes(etb);
+
+  /* Align the value of the new trace pointer */
+  trace_buf_ptr = (void *)ALIGN_UP((unsigned long)trace_buf_ptr, 0x8);
+
+  /* Compute the remaining space in the buffer */
+  buf_remain =
+      trace_buf_size - (size_t)((char *)trace_buf_ptr - (char *)trace_buf);
+  /* If there is no space left, buffer size is doubled and remapped */
+  if ((size_t)len > buf_remain) {
+    new_trace_buf_size = trace_buf_size * 2;
+    new_trace_buf = mremap(trace_buf, trace_buf_size, new_trace_buf_size, 0);
+
+    /* Check for a remap error */
+    if (!new_trace_buf) {
+      fprintf(stderr, "mremap call failed when resizing trace buffer");
+      goto exit;
+    }
+    /* Adjust new trace buffer pointers and values */
+    trace_buf_ptr = (void *)((char *)new_trace_buf +
+                             ((char *)trace_buf_ptr - (char *)trace_buf));
+    trace_buf = new_trace_buf;
+    trace_buf_size = new_trace_buf_size;
+    buf_remain = (size_t)((char *)trace_buf_ptr - (char *)trace_buf);
+  }
+
+  /* Get the trace data */
+  n = cs_get_trace_data(etb, trace_buf_ptr, buf_remain);
+  if (n <= 0) {
+    fprintf(stderr, "Failed to get trace\n");
+  } else if (n < len) {
+    fprintf(stderr, "Got incomplete trace\n");
+  }
+  /* Empty the trace buffer, resetting read and write pointers */
+  cs_empty_trace_buffer(etb);
+  trace_buf_ptr = (void *)((char *)trace_buf_ptr + n);
+
+  ret = 0;
+
+exit:
+  /* Release trace mutex */
+  pthread_mutex_unlock(&trace_mutex);
+  return ret;
+}
+
+
