@@ -303,3 +303,190 @@ int configure_trace(const struct board *board, struct cs_devices_t *devices,
   return 0;
 }
 
+/**
+* Trace enable, setting up and enabling ETR, ETF
+*/
+int enable_trace(const struct board *board, struct cs_devices_t *devices)
+{
+  int i, error_count;
+
+  /* Sanity check */
+  if (!board || !devices) {
+    return -1;
+  }
+
+  /* Setup and enable ETR as the main sink and trace buffer */
+  if (cs_sink_etr_setup(devices->etb, etr_ram_addr, etr_ram_size,
+                        board->etr_axictl) != 0) {
+    fprintf(stderr, "Failed to setup ETR\n");
+    return -1;
+  }
+  if (cs_sink_enable(devices->etb) != 0) {
+    fprintf(stderr, "Failed to enable ETR\n");
+    return -1;
+  }
+
+  /* Setup and enable ETFs as HW FIFO sinks in the system (there are two on the
+   * ZCU104) */
+  for (i = 0; i < devices->num_trace_sinks; i++) {
+    if (cs_sink_etf_setup(devices->trace_sinks[i], CS_TMC_MODE_HWFIFO) != 0) {
+      fprintf(stderr, "Failed to setup ETF %d\n", i + 1);
+      return -1;
+    }
+    /* FIXME: Redundancy? */
+    if (cs_sink_enable(devices->trace_sinks[i]) != 0) {
+      fprintf(stderr, "Failed to enable ETF %d\n", i);
+      return -1;
+    }
+    if (cs_tmc_hw_fifo_enable(devices->trace_sinks[i], /*bufwm=*/0x0) != 0) {
+      printf("Could not enable sinks as hw fifo %d/%d\n", i + 1,
+             devices->num_trace_sinks);
+      return -1;
+    }
+  }
+
+  /* Enable sources, ETMs */
+  for (i = 0; i < board->n_cpu; ++i) {
+    cs_trace_enable(devices->ptm[i]);
+  }
+
+  /* Permanently unlocks devices, starting from the top */
+  cs_checkpoint();
+
+  /* If needed, show the current cross-trigger configuration */
+  if (registration_verbose > 0) {
+    cs_cti_diag();
+  }
+
+  /* Check for errors */
+  error_count = cs_error_count();
+  if (error_count > 0) {
+    fprintf(stderr, "%u errors reported when enabling trace\n", error_count);
+    return -1;
+  }
+
+  return 0;
+}
+
+/**
+* Trace disable, flushing the main buffer, then disabling sources and sinks
+*/
+int disable_trace(const struct board *board, struct cs_devices_t *devices)
+{
+  int i, error_count;
+
+  if (!board || !devices) {
+    return -1;
+  }
+
+  /* Set FFCR:FlushMan bit to stop capture. */
+  cs_etb_flush_and_wait_stop(devices);
+
+  /* Disable source ETMs */
+  for (i = 0; i < board->n_cpu; ++i) {
+    cs_trace_disable(devices->ptm[i]);
+  }
+  /* Disable intermediate sinks (ETFs) */
+  for (i = 0; i < devices->num_trace_sinks; i++) {
+    if (devices->trace_sinks[i]) {
+      cs_sink_disable(devices->trace_sinks[i]);
+    }
+  }
+  /* Disable the main sink (ETR) */
+  cs_sink_disable(devices->etb);
+
+  /* If needed, show the ETM config */
+  if (registration_verbose > 1) {
+    for (i = 0; i < board->n_cpu; ++i) {
+      show_etm_config(devices->ptm[i]);
+    }
+  }
+
+  /* Check for errors */
+  error_count = cs_error_count();
+  if (error_count > 0) {
+    fprintf(stderr, "%u errors reported when disabling trace\n", error_count);
+    return -1;
+  }
+
+  return 0;
+}
+
+/**
+* Enable all (and only them) sinks in the system (ETR + 2 ETFs)
+*/
+int enable_trace_sinks_only(struct cs_devices_t *devices)
+{
+  int i, error_count;
+
+  /* Sanity check */
+  if (!devices) {
+    return -1;
+  }
+
+  /* Enable ETR, the main trace buffer */
+  if (cs_sink_enable(devices->etb) != 0) {
+    fprintf(stderr, "Failed to enable ETR\n");
+    return -1;
+  }
+
+  /* Enable both ETFs, the main trace buffer */
+  for (i = 0; i < devices->num_trace_sinks; i++) {
+    if (cs_sink_etf_setup(devices->trace_sinks[i], CS_TMC_MODE_HWFIFO) != 0) {
+      fprintf(stderr, "Failed to setup ETF %d\n", i);
+      return -1;
+    }
+    /* FIXME: HW FIFO? */
+    if (cs_sink_enable(devices->trace_sinks[0]) != 0) {
+      fprintf(stderr, "Failed to enable ETF %d\n", i);
+      return -1;
+    }
+  }
+
+  /* Permanently unlocks devices, starting from the top */
+  cs_checkpoint();
+
+  /* Check for errors */
+  error_count = cs_error_count();
+  if (error_count > 0) {
+    fprintf(stderr, "%u errors reported when enabling trace\n", error_count);
+    return -1;
+  }
+
+  return 0;
+}
+
+/**
+* Disable all (and only them) sinks in the system (ETR + 2 ETFs)
+*/
+int disable_trace_sinks_only(struct cs_devices_t *devices)
+{
+  int i, error_count;
+
+  /* Sanity check */
+  if (!devices) {
+    return -1;
+  }
+
+  /* Set FFCR:FlushMan bit to stop capture. */
+  cs_etb_flush_and_wait_stop(devices);
+
+  /* Disable both ETFs */
+  for (i = 0; i < devices->num_trace_sinks; i++) {
+    if (devices->trace_sinks[i]) {
+      cs_sink_disable(devices->trace_sinks[i]);
+    }
+  }
+
+  /* Disable main trace buffer, ETR */
+  cs_sink_disable(devices->etb);
+
+  /* Check for errors */
+  error_count = cs_error_count();
+  if (error_count > 0) {
+    fprintf(stderr, "%u errors reported when disabling trace\n", error_count);
+    return -1;
+  }
+
+  return 0;
+}
