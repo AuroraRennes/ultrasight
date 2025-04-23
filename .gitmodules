@@ -1,0 +1,4 @@
+[submodule "csal"]
+	path = csal
+	url = git@github.com:QDucasse/csal.git
+	branch = zcu-104

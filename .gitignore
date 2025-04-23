@@ -1,0 +1,6 @@
+*.o
+cs-trace
+cstrace.bin
+trace/
+tests/*
+!tests/*.c
