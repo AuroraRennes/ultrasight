@@ -22,6 +22,31 @@ extern size_t etr_ram_size;
 extern int registration_verbose;
 
 /**
+* Set the ETB to manual flush and wait for the end of the trace.
+*/
+void cs_etb_flush_and_wait_stop(struct cs_devices_t *devices)
+{
+  unsigned int ffcr_val, status_val;
+  if (cs_sink_is_enabled(devices->etb)) {
+    /* Read the value of the Flush and Format Control Register. */
+    ffcr_val = cs_device_read(devices->etb, CS_ETB_FLFMT_CTRL);
+    /* Set the manual flush bit and write it back */
+    ffcr_val |= CS_ETB_FLFMT_CTRL_FOnMan;
+    cs_device_write(devices->etb, CS_ETB_FLFMT_CTRL, ffcr_val);
+    /* Wait for the ETB to stop collecting data, i.e. waiting for the FtEmpty
+       bit to be set in CS_ETB_STATUS */
+    if (cs_device_wait(devices->etb, CS_ETB_STATUS, CS_ETB_STATUS_FtEmpty,
+                       CS_REG_WAITBITS_ALL_1, 0, &status_val) != 0) {
+      fprintf(stderr,
+              "ETB collection not stopped on flush on trigger. STS: 0x%08x\n",
+              status_val);
+    }
+  } else {
+    fprintf(stderr, "ETB is not activated, flush cancelled.\n");
+  }
+}
+
+/**
 * Define the address ranges of the ETMv4 by configuring the address comparators.
 */
 static void set_etmv4_addr_range(struct map_info *range,
