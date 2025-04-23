@@ -169,3 +169,37 @@ static void set_trace_state(trace_state_t new_state)
   pthread_mutex_unlock(&trace_state_mutex);
 }
 
+/**
+* Allocate the trace buffer through mmap
+*/
+static int alloc_trace_buf(void)
+{
+  trace_buf = mmap(NULL, DEFAULT_TRACE_SIZE, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (!trace_buf) {
+    fprintf(stderr, "mmap failed when allocating trace buffer");
+    return -1;
+  }
+  /* FIXME: Do not initialize global variables in the function */
+  trace_buf_size = DEFAULT_TRACE_SIZE;
+  trace_buf_ptr = trace_buf;
+  return 0;
+}
+
+/**
+* Free trace buffer, emptying the device.etb then unmapping the corresponding
+* buffer.
+*/
+static void free_trace_buf(void)
+{
+  /* FIXME: Make it better */
+  if (devices.etb) {
+    cs_empty_trace_buffer(devices.etb);
+  }
+
+  if (trace_buf) {
+    munmap(trace_buf, trace_buf_size);
+    trace_buf_ptr = NULL;
+  }
+}
+
