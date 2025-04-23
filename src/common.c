@@ -203,3 +203,40 @@ static void free_trace_buf(void)
   }
 }
 
+/**
+* Export trace to file name "cwd/trace_name"
+*/
+static int export_trace(const char *trace_name)
+{
+  int ret;
+  char *cwd;
+  char trace_path[PATH_MAX];
+  FILE *fp;
+
+  ret = -1;
+
+  /* Get the current directory */
+  cwd = getcwd(NULL, 0);
+  if (!cwd) {
+    perror("getcwd");
+    goto exit;
+  }
+  /* Construct the file path "cwd/trace_name" */
+  memset(trace_path, 0, sizeof(trace_path));
+  snprintf(trace_path, sizeof(trace_path), "%s/%s", cwd, trace_name);
+  /* Open file, write the trace buffer and close it */
+  fp = fopen(trace_path, "wb");
+  if (!fp) {
+    perror("fopen");
+    goto exit;
+  }
+  fwrite(trace_buf, (size_t)((char *)trace_buf_ptr - (char *)trace_buf), 1, fp);
+  fclose(fp);
+  ret = 0;
+exit:
+  if (cwd) {
+    free(cwd);
+  }
+  return ret;
+}
+
