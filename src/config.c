@@ -184,3 +184,50 @@ void show_etm_config(cs_device_t etm)
   cs_etm_config_print_ex(etm, t4config);
 }
 
+/**
+* Initialize ETM for version 4
+*/
+int init_etm(cs_device_t dev)
+{
+  int rc;
+  cs_etmv4_config_t v4config;
+  /* Verify that the device is a source ETM */
+  assert(cs_device_has_class(dev, CS_DEVCLASS_SOURCE));
+  int etm_version = cs_etm_get_version(dev);
+
+  /* Set to a 'clean' state - clears events & values, retains ctrl and ID,
+   * ensuring it is programmable */
+  if ((rc = cs_etm_clean(dev)) != 0) {
+    fprintf(stderr, "Failed to set ETM/PTM into clean state\n");
+    return rc;
+  }
+
+  /** Program up some basic trace control.
+   *   Set up to trace all instructions.
+   *   ETMv4 support only
+   */
+  assert(CS_ETMVERSION_IS_ETMV4(etm_version));
+
+  /* ETMv4 initialisation */
+  cs_etm_config_init_ex(dev, &v4config);
+  v4config.flags = CS_ETMC_CONFIG;
+  cs_etm_config_get_ex(dev, &v4config);
+
+  /* Enable the trace with parameters */
+  v4config.flags |= CS_ETMC_TRACE_ENABLE | CS_ETMC_EVENTSELECT;
+  v4config.victlr = 0x201; /* Viewinst - trace all, ss started. */
+  v4config.viiectlr = 0;   /* no address range */
+  v4config.vissctlr = 0;   /* no start stop points */
+
+  /* Disable all event tracing  */
+  v4config.eventctlr0r = 0;
+  v4config.eventctlr1r = 0;
+
+  /* Disable overflow & sync */
+  v4config.stallcrlr = (1 << 13); /* no overflow */
+  v4config.syncpr = 0;            /* no sync */
+  cs_etm_config_put_ex(dev, &v4config);
+
+  return 0;
+}
+
