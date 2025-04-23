@@ -104,3 +104,127 @@ void parent(pid_t pid, int *child_status)
   }
 }
 
+/**
+* CLI usage display
+*/
+static void usage(char *argv0)
+{
+  fprintf(stderr, "Usage: %s [OPTIONS] -- EXE [ARGS]\n", argv0);
+  fprintf(stderr, "CoreSight process tracer\n");
+  fprintf(stderr, "[OPTIONS]\n");
+  fprintf(stderr, "  -b, --board=NAME\t\tspecify board name (default: %s)\n",
+          board_name);
+  fprintf(stderr,
+          "  -c, --cpu=INT\t\t\tbind traced process to CPU (default: %d)\n",
+          trace_cpu);
+  fprintf(stderr, "  -e, --export\t\tenable config export (default: %d)\n",
+          export_config);
+  fprintf(stderr,
+          "  -u, --udmabuf=INT\t\tspecify u-dma-buf device number to use "
+          "(default: %d)",
+          udmabuf_num);
+  fprintf(stderr,
+          "  -v, --verbose[=INT]\t\tverbose output level (default: %d)\n",
+          registration_verbose);
+  fprintf(stderr, "  -h, --help\t\t\tshow this help\n");
+}
+
+/**
+* Main function, parses the options using getopt, extracts the tracee program and
+* launch it using the parent and child functions
+*/
+int main(int argc, char *argv[])
+{
+  const struct option long_options[] = {
+      {"board", required_argument, NULL, 'b'},
+      {"cpu", required_argument, NULL, 'c'},
+      {"export", no_argument, NULL, 'e'},
+      {"udmabuf", required_argument, NULL, 'u'},
+      {"verbose", optional_argument, NULL, 'v'},
+      {"help", no_argument, NULL, 'h'},
+      {0, 0, 0, 0},
+  };
+
+  char **argvp;
+  pid_t pid;
+  int opt;
+  int option_index;
+
+  argvp = NULL;
+  registration_verbose = 0;
+  trace_bitmap_size = DEFAULT_TRACE_BITMAP_SIZE;
+
+  /* Check argument count */
+  if (argc < 3) {
+    usage(argv[0]);
+    exit(EXIT_SUCCESS);
+  }
+  /* Parse CLI elements */
+  while ((opt = getopt_long(argc, argv, "b:c:e:v::h", long_options,
+                            &option_index)) != -1) {
+    switch (opt) {
+      /* Board name */
+      case 'b':
+        board_name = optarg;
+        break;
+      /* CPU number */
+      case 'c':
+        trace_cpu = atoi(optarg);
+        break;
+      /* Export to snapshot format */
+      case 'e':
+        export_config = true;
+        break;
+      /* udmabuf number */
+      case 'u':
+        udmabuf_num = atoi(optarg);
+        break;
+      /* Verbose option */
+      case 'v':
+        if (optarg) {
+          registration_verbose = atoi(optarg);
+        } else {
+          registration_verbose = 1;
+        }
+        break;
+      /* Help display */
+      case 'h':
+        usage(argv[0]);
+        exit(EXIT_SUCCESS);
+        break;
+      default:
+        break;
+    }
+  }
+
+  /* Check for missing tracee program */
+  if (argc <= optind || strcmp(argv[optind - 1], "--")) {
+    usage(argv[0]);
+    exit(EXIT_FAILURE);
+  }
+
+  /* Extract tracee program name */
+  argvp = &argv[optind];
+  if (!argvp) {
+    usage(argv[0]);
+    exit(EXIT_FAILURE);
+  }
+
+  /* For the child and parent program */
+  pid = fork();
+  switch (pid) {
+    case 0:
+      child(argvp);
+      break;
+    case -1:
+      perror("fork");
+      exit(EXIT_FAILURE);
+      break;
+    default:
+      parent(pid, NULL);
+      wait(NULL);
+      break;
+  }
+
+  return 0;
+}
