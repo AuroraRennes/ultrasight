@@ -153,3 +153,294 @@ int get_udmabuf_info(int udmabuf_num, unsigned long *phys_addr, size_t *size)
   return 0;
 }
 
+/* ============== CPU AFFINITIES ============== */
+
+/**
+ * Allocate and initialize a CPU affinity mask for the number of processors on
+ * the system
+ * @param cpu_set pointer to a pointer where the allocated CPU will be stored
+ * @return allocated set of CPUs
+ */
+static cpu_set_t *alloc_cpu_set(cpu_set_t **cpu_set, size_t *setsize)
+{
+  int nprocs;
+
+  if (!cpu_set || !setsize) {
+    return NULL;
+  }
+  /* Get the number of available CPU cores on the system */
+  nprocs = get_nprocs();
+  /* Allocates a set large enough to store the nprocs pCPUs */
+  *cpu_set = CPU_ALLOC(nprocs);
+  if (!(*cpu_set)) {
+    perror("CPU_ALLOC");
+    return NULL;
+  }
+  /* Initializes the CPU set */
+  *setsize = CPU_ALLOC_SIZE(nprocs);
+  CPU_ZERO_S(*setsize, *cpu_set);
+
+  return *cpu_set;
+}
+
+/* Binds a process to a CPU */
+int set_cpu_affinity(int cpu, pid_t pid)
+{
+  int ret;
+  cpu_set_t *cpu_set;
+  size_t setsize;
+
+  ret = -1;
+  /* Allocate a CPU set */
+  if (!alloc_cpu_set(&cpu_set, &setsize)) {
+    goto exit;
+  }
+  /* Sets the CPU in the set */
+  CPU_SET_S(cpu, setsize, cpu_set);
+  /* Applies the affinity */
+  if (sched_setaffinity(pid, setsize, cpu_set) < 0) {
+    perror("sched_setaffinity");
+    goto exit;
+  }
+  ret = 0;
+
+exit:
+  /* Frees the CPU set */
+  if (cpu_set) {
+    CPU_FREE(cpu_set);
+  }
+
+  return ret;
+}
+
+/**
+ * Find an available CPU that is not assigned to a process.
+ * It does so by iterating over all processes in /proc, checking
+ * its threads and their corresponding CPU affinities
+ */
+int find_free_cpu(void)
+{
+  int nprocs;
+  DIR *proc_dir;
+  struct dirent *proc_entry;
+  char task_path[PATH_MAX];
+  DIR *task_dir;
+  struct dirent *task_entry;
+  char status_path[PATH_MAX];
+  FILE *status_fp;
+  char tmp[MAX_LINE];
+  bool has_vmsize;
+  unsigned int hval;
+  bool cpu_used[MAX_CPUS];
+  int i;
+
+  /* Get the number of online processors, see sysconf(3) */
+  nprocs = sysconf(_SC_NPROCESSORS_ONLN);
+  if (nprocs < 2) {
+    return 0;
+  }
+  /* Initialize an array to track used CPUs */
+  memset(cpu_used, (int)false, sizeof(cpu_used));
+
+  /* Iterate over all processes in /proc */
+  if (!(proc_dir = opendir("/proc"))) {
+    perror("opendir");
+    return -1;
+  }
+
+  /* For each process, check its threads (tasks) */
+  while ((proc_entry = readdir(proc_dir))) {
+    if (!isdigit(proc_entry->d_name[0])) {
+      continue;
+    }
+    memset(task_path, 0, PATH_MAX);
+    snprintf(task_path, PATH_MAX, "/proc/%s/task", proc_entry->d_name);
+    if (!(task_dir = opendir((const char *)task_path))) {
+      perror("opendir");
+      continue;
+    }
+
+    /* For each task, check its status to determine affinities */
+    while ((task_entry = readdir(task_dir))) {
+      if (!isdigit(task_entry->d_name[0])) {
+        continue;
+      }
+
+      memset(status_path, 0, PATH_MAX);
+      snprintf(status_path, PATH_MAX, "/proc/%s/task/%s/status",
+               proc_entry->d_name, task_entry->d_name);
+      if (!(status_fp = fopen(status_path, "r"))) {
+        continue;
+      }
+
+      /* Once the status is found, gets:
+       * - VmSize, ensuring it is a real process using virtual memory
+       * - Cpus_allowed_list: CPUs the thread is allowed to run on
+       */
+      has_vmsize = false;
+      while (fgets(tmp, MAX_LINE, status_fp)) {
+        hval = 0;
+        if (!strncmp(tmp, "VmSize:\t", 8)) {
+          has_vmsize = true;
+        }
+        /* Ensures that no ranges (0-3) or lists (0,2,4) are used */
+        if (!strncmp(tmp, "Cpus_allowed_list:\t", 19) && !strchr(tmp, '-') &&
+            !strchr(tmp, ',') && sscanf(tmp + 19, "%u", &hval) == 1 &&
+            hval < MAX_CPUS && has_vmsize) {
+          /* Flag the corresponding CPUs in the array */
+          cpu_used[hval] = true;
+          break;
+        }
+      }
+      fclose(status_fp);
+    }
+    closedir(task_dir);
+  }
+  closedir(proc_dir);
+
+  /* Finds the first unassigned CPU in the array and returns it */
+  for (i = 0; i < nprocs; i++) {
+    if (!cpu_used[i]) {
+      /* Free CPU found. */
+      return i;
+    }
+  }
+
+  /* Free CPU not found. */
+  return -1;
+}
+
+/* Set given cpu_set bits represent related CPU cores with a given cpu.
+ * It reads the list of CPUs that belong to the same physical core as the
+ * given one and sets them in a CPU affinity set.
+ */
+static int set_core_cpus(int cpu, cpu_set_t *cpu_set, size_t setsize)
+{
+  int ret;
+  FILE *fp;
+  char core_cpus_list_path[PATH_MAX];
+  char *token;
+  size_t n;
+  ssize_t readn;
+  long int core_cpu;
+
+  ret = -1;
+  fp = NULL;
+  token = NULL;
+
+  if (!cpu_set || !setsize) {
+    goto exit;
+  }
+  /* Opens the /sys/devices/.../cpu<n>/core_cpus_list file and reads the cpu
+   * list */
+  memset(core_cpus_list_path, 0, sizeof(core_cpus_list_path));
+  snprintf(core_cpus_list_path, sizeof(core_cpus_list_path),
+           "/sys/devices/system/cpu/cpu%d/topology/core_cpus_list", cpu);
+
+  fp = fopen(core_cpus_list_path, "r");
+  if (!fp) {
+    perror("fopen");
+    goto exit;
+  }
+
+  /* Parse the comma-separated list of CPUs, converting each token into a CPU in
+   * cpu_set */
+  token = NULL;
+  n = 0;
+  while ((readn = getdelim(&token, &n, ',', fp)) != -1) {
+    if (readn > 1 && token[readn - 1] != '\0') {
+      token[readn - 1] = '\0';
+    }
+    core_cpu = strtol(token, NULL, 0);
+    if (core_cpu == LONG_MIN || core_cpu == LONG_MAX) {
+      perror("strtol");
+      goto exit;
+    }
+    CPU_SET_S((int)core_cpu, setsize, cpu_set);
+  }
+
+  ret = 0;
+
+exit:
+  if (token) {
+    free(token);
+  }
+
+  if (fp) {
+    fclose(fp);
+  }
+
+  return ret;
+}
+
+/**
+ * Determines a preferred CPU for a given process, scanning all affinities
+ */
+int get_preferred_cpu(pid_t pid)
+{
+  int ret;
+  int i;
+  cpu_set_t *cpu_set;
+  cpu_set_t *core_cpu_set;
+  size_t setsize;
+  size_t core_setsize;
+  int nprocs;
+  int preferred_cpu;
+
+  ret = -1;
+  cpu_set = NULL;
+  core_cpu_set = NULL;
+  preferred_cpu = -1;
+
+  /* Allocate a cpu_set for affinity tracking */
+  if (!alloc_cpu_set(&cpu_set, &setsize)) {
+    goto exit;
+  }
+  /* Retrieve the CPU affinity for the process */
+  if (sched_getaffinity(pid, setsize, cpu_set) < 0) {
+    perror("sched_getaffinity");
+    goto exit;
+  }
+  /* Get the number of processors available, allocate a CPU set for core
+   * siblings tracking */
+  nprocs = get_nprocs();
+  if (!alloc_cpu_set(&core_cpu_set, &core_setsize)) {
+    goto exit;
+  }
+  /* For each processor, determine which cores the process is using,
+   * if it is using CPU i, it fills the core_cpu_set with all CPUs that
+   * share a physical core with the process.
+   */
+  for (i = 0; i < nprocs; i++) {
+    if (CPU_ISSET_S(i, setsize, cpu_set)) {
+      if (set_core_cpus(i, core_cpu_set, core_setsize) < 0) {
+        goto exit;
+      }
+    }
+  }
+
+  /* Scans all CPUs and finds the first one that is NOT in core_cpu_set,
+   * meaning this CPU does NOT share a physical core with any currently assigned
+   * CPUs
+   */
+  for (i = 0; i < nprocs; i++) {
+    if (!CPU_ISSET_S(i, core_setsize, core_cpu_set)) {
+      preferred_cpu = i;
+      break;
+    }
+  }
+
+  ret = preferred_cpu;
+
+exit:
+  if (core_cpu_set) {
+    CPU_FREE(core_cpu_set);
+  }
+
+  if (cpu_set) {
+    CPU_FREE(cpu_set);
+  }
+
+  return ret;
+}
+
