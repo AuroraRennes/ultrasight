@@ -240,3 +240,93 @@ exit:
   return ret;
 }
 
+/**
+* Enable the CoreSight trace, locking the mutex
+*/
+static int enable_cs_trace(pid_t pid)
+{
+  int ret;
+  ret = -1;
+
+  /* Acquire the trace mutex */
+  pthread_mutex_lock(&trace_mutex);
+
+  if (is_first_trace) {
+    /* Do not specify traced PID in forkserver mode */
+    if (configure_trace(board, &devices, map_info, range_count, pid) < 0) {
+      fprintf(stderr, "configure_trace() failed\n");
+      goto exit;
+    }
+    /* Enable ETMs and trace sinks for the first time */
+    if (enable_trace(board, &devices) < 0) {
+      fprintf(stderr, "enable_trace() failed\n");
+      goto exit;
+    }
+    is_first_trace = false;
+  } else {
+    /* Enable trace sinks only once the ETMs enabled */
+    if (enable_trace_sinks_only(&devices) < 0) {
+      fprintf(stderr, "enable_trace_sinks_only() failed\n");
+      goto exit;
+    }
+  }
+
+  /* Export the config in snapshot format if needed */
+  if (export_config) {
+    do_dump_config(board, &devices, 0);
+  }
+
+  ret = 0;
+
+exit:
+  /* Shutdown properly if configuration or enable failed */
+  if (ret < 0) {
+    cs_shutdown();
+  }
+  /* Release trace mutex */
+  pthread_mutex_unlock(&trace_mutex);
+
+  return ret;
+}
+
+/**
+* Disable CoreSight trace, retries several times before giving up
+*/
+static int disable_cs_trace(bool disable_all)
+{
+  int ret;
+  int disable_trial;
+
+  /* Acquire trace mutex */
+  pthread_mutex_lock(&trace_mutex);
+
+  /* Tries to disable TRACE_DISABLE_TRIAL times before failing */
+  disable_trial = 0;
+  while (disable_trial++ < TRACE_DISABLE_TRIAL) {
+    if (disable_all) {
+      if ((ret = disable_trace(board, &devices)) < 0) {
+        fprintf(stderr, "disable_trace() failed\n");
+      }
+    } else {
+      if ((ret = disable_trace_sinks_only(&devices)) < 0) {
+        fprintf(stderr, "disable_trace_sinks_only() failed\n");
+      }
+    }
+
+    /* If there is no error, break out of the trial loop */
+    if (!(ret < 0)) {
+      break;
+    }
+
+    /* Sleep for TRACE_DISABLE_TRIAL_USLEEP before next try */
+    usleep(TRACE_DISABLE_TRIAL_USLEEP);
+    /* Reset error count */
+    cs_reset_error_count();
+  }
+
+  /* Release the trace mutex */
+  pthread_mutex_unlock(&trace_mutex);
+
+  return ret;
+}
+
