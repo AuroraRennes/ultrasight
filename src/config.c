@@ -231,3 +231,75 @@ int init_etm(cs_device_t dev)
   return 0;
 }
 
+/**
+* Configure the trace, setup the different elements.
+*/
+int configure_trace(const struct board *board, struct cs_devices_t *devices,
+                    struct map_info *range, int range_count, pid_t pid)
+{
+  int i, r, error_count;
+
+  if (!board || !devices) {
+    return -1;
+  }
+
+  /* Ensure TPIU isn't generating back-pressure */
+  cs_disable_tpiu();
+  /* While programming, ensure we are not collecting trace to the main buffer */
+  cs_sink_disable(devices->etb);
+  /* Check all PTMs */
+  for (i = 0; i < board->n_cpu; ++i) {
+    /* Try to get the cpu, attribute an ID, and initialize the ETM */
+    devices->ptm[i] = cs_cpu_get_device(i, CS_DEVCLASS_SOURCE);
+    if (devices->ptm[i] == CS_ERRDESC) {
+      fprintf(stderr, "** failed to get trace source for CPU #%d\n", i);
+      return -1;
+    }
+    if (cs_set_trace_source_id(devices->ptm[i], 0x10 + i) < 0) {
+      fprintf(stderr, "** failed to set valid trace source ID for CPU #%d\n",
+              i);
+      return -1;
+    }
+    if (init_etm(devices->ptm[i]) < 0) {
+      fprintf(stderr, "** failed to initialize ETM for CPU #%d\n", i);
+      return -1;
+    }
+  }
+
+  /* Permanently unlocks devices, starting from the top */
+  cs_checkpoint();
+
+  /* Check that all ETMs use version 4 */
+  for (i = 0; i < board->n_cpu; ++i) {
+    if (CS_ETMVERSION_MAJOR(cs_etm_get_version(devices->ptm[i])) >=
+        CS_ETMVERSION_ETMv4) {
+      r = configure_etmv4_addr_range_cid(devices->ptm[i], range, range_count,
+                                         (unsigned long)pid);
+    } else {
+      fprintf(stderr, "Unsupported ETM for CPU #%d\n", i);
+      continue;
+    }
+    if (r != 0) {
+      fprintf(stderr, "Configuration failed for CPU #%d\n", i);
+      return r;
+    }
+  }
+
+  /* Setup stop on flush for the main buffer */
+  unsigned int ffcr_val;
+  ffcr_val = cs_device_read(devices->etb, CS_ETB_FLFMT_CTRL);
+  ffcr_val |= CS_ETB_FLFMT_CTRL_StopFl;
+  if (cs_device_write(devices->etb, CS_ETB_FLFMT_CTRL, ffcr_val) != 0) {
+    fprintf(stderr, "Failed to set stop on flush\n");
+  }
+
+  /* Count and display configuration errors */
+  error_count = cs_error_count();
+  if (error_count > 0) {
+    fprintf(stderr, "%u errors reported when configuring trace\n", error_count);
+    return -1;
+  }
+
+  return 0;
+}
+
