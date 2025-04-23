@@ -2,6 +2,13 @@
 /* Copyright (C) ARM Limited, 2013-2016. All rights reserved. */
 /* Copyright 2021 Ricerca Security, Inc. All rights reserved. */
 
+/* Modifications Copyright 2025 Inria, CNRS, IRISA, CentraleSupelec */
+/*
+ * Changes made by Volker Stolz, Guillaume Hiet & Quentin Ducasse on 2025-04-23:
+ * - Removed setup of other boards
+ * - Added ZCU-104 setup
+ */
+
 #ifndef CS_TRACE_KNOWN_BOARDS_H
 #define CS_TRACE_KNOWN_BOARDS_H
 

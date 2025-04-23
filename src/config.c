@@ -1,6 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Copyright 2021 Ricerca Security, Inc. All rights reserved. */
 
+/* Modifications Copyright 2025 Inria, CNRS, IRISA, CentraleSupelec */
+/*
+ * Changes made by Quentin Ducasse on 2025-04-23:
+ * - Removed decoder related code
+ * - Added comments for clarity
+ */
+
 #include "config.h"
 
 #include <stdio.h>

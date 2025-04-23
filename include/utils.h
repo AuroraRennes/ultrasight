@@ -1,6 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 /* Copyright 2021 Ricerca Security, Inc. All rights reserved. */
 
+/* Modifications Copyright 2025 Inria, CNRS, IRISA, CentraleSupelec */
+/*
+ * Changes made by Quentin Ducasse on 2025-04-23:
+ * - Removed decoder related code
+ */
+
 #ifndef CS_TRACE_UTILS_H
 #define CS_TRACE_UTILS_H
 
@@ -44,10 +50,6 @@ int export_decoder_args(int trace_id, const char *trace_path,
 int get_preferred_cpu(pid_t pid);
 int find_free_cpu(void);
 int set_cpu_affinity(int cpu, pid_t pid);
-int set_pthread_cpu_affinity(int cpu, pthread_t thread);
-void read_pid_fd_path(pid_t pid, int fd, char *buf, size_t size);
-int get_mmap_params(pid_t pid, struct mmap_params *params);
-bool is_syscall_exit_group(pid_t pid);
 int get_udmabuf_info(int udmabuf_num, unsigned long *phys_addr, size_t *size);
 
 #endif /* CS_TRACE_UTILS_H */
