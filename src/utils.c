@@ -444,3 +444,110 @@ exit:
   return ret;
 }
 
+/* ============== MAP INFO ============== */
+
+/* Dump all information stored in the map_info struct to a stream */
+void dump_map_info(FILE *stream, struct map_info *map_info, int count)
+{
+  int i;
+
+  for (i = 0; i < count; i++) {
+    fprintf(stream, "[0x%lx-0x%lx]@0x%lx: %s\n", map_info[i].start,
+            map_info[i].end, map_info[i].offset, map_info[i].path);
+  }
+}
+
+/**
+ * Extracts memory mapping information of a given process from
+ * /proc/<pid>/maps getting executable regions, mapping those
+ * in memory.
+ */
+int setup_map_info(pid_t pid, struct map_info *map_info, int info_count_max)
+{
+  FILE *fp;
+  char maps_path[PATH_MAX];
+  char *line;
+  size_t n;
+  ssize_t readn;
+  int count;
+  char *path;
+  int fd;
+  size_t buf_size;
+  void *buf;
+  int i;
+
+  /* Memory mapping placeholder */
+  unsigned long start; /* Start of the region  */
+  unsigned long end;   /* End of the region    */
+  off_t offset;        /* Offset in the region */
+  char x;              /* eXecutable character */
+  char c;              /* other characters     */
+
+  /* Open the /proc/<pid>/maps file */
+  memset(maps_path, 0, sizeof(maps_path));
+  snprintf(maps_path, sizeof(maps_path), "/proc/%d/maps", pid);
+  fp = fopen(maps_path, "r");
+  if (fp == NULL) {
+    perror("fopen");
+    return -1;
+  }
+  /* Parse memory mappings */
+  line = NULL;
+  n = 0;
+  count = 0;
+  while ((readn = getline(&line, &n, fp)) != -1) {
+    if (readn > 0 && line[readn - 1] == '\n') {
+      line[readn - 1] = '\0';
+      readn--;
+    }
+    /* Extract address range and permission, avoiding non-executable regions */
+    sscanf(line, "%lx-%lx %c%c%c%c %lx", &start, &end, &c, &c, &x, &c, &offset);
+    if (x != 'x') {
+      /* Not an executable region */
+      continue;
+    }
+    /* Too many map_info */
+    if (count >= info_count_max) {
+      fprintf(stderr, "INFO: [0x%lx-0x%lx] will not be traced\n", start, end);
+      continue;
+    }
+    /* Search absolute path, excluding anonymous mappings */
+    path = strchr(line, '/');
+    if (!path) {
+      continue;
+    }
+    /* Extract the information in the structure */
+    map_info[count].start = start;
+    map_info[count].end = end;
+    map_info[count].offset = offset;
+    map_info[count].buf = NULL;
+    strncpy(map_info[count].path, path, PATH_MAX - 1);
+    count++;
+  }
+
+  /* Cleanup */
+  if (line != NULL) {
+    free(line);
+  }
+  fclose(fp);
+
+  for (i = 0; i < count; i++) {
+    /* Open the mapped files */
+    if ((fd = open(map_info[i].path, O_RDONLY | O_SYNC)) < -1) {
+      perror("open");
+      return -1;
+    }
+    /* Mapping the regions into read-only mappings of the executable memory */
+    buf_size = (size_t)ALIGN_UP(map_info[i].end - map_info[i].start, PAGE_SIZE);
+    buf = mmap(NULL, buf_size, PROT_READ, MAP_PRIVATE, fd, map_info[i].offset);
+    if (!buf) {
+      perror("mmap");
+      close(fd);
+      return -1;
+    }
+    map_info[i].buf = buf;
+    close(fd);
+  }
+
+  return count;
+}
