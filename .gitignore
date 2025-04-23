@@ -4,3 +4,4 @@ cstrace.bin
 trace/
 tests/*
 !tests/*.c
+.clangd
