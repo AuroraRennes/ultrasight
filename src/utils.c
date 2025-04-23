@@ -90,3 +90,66 @@ void dump_maps(FILE *stream, pid_t pid)
   return;
 }
 
+/* ============== UDMABUF ============== */
+
+/* Retrieve information (address and size) of a UDMA buffer */
+int get_udmabuf_info(int udmabuf_num, unsigned long *phys_addr, size_t *size)
+{
+  const char *udmabuf_root = "/sys/class/u-dma-buf";
+
+  int ret;
+  char udmabuf_path[PATH_MAX];
+  char tmp_path[PATH_MAX];
+  char attr[1024];
+  int fd;
+  struct stat sb;
+
+  ret = -1;
+
+  /* Check for existence "/sys/class/u-dma-buf/udmabufX" */
+  memset(udmabuf_path, '\0', sizeof(udmabuf_path));
+  snprintf(udmabuf_path, sizeof(udmabuf_path), "%s/udmabuf%d", udmabuf_root,
+           udmabuf_num);
+  if (stat(udmabuf_path, &sb) != 0 || (!S_ISDIR(sb.st_mode))) {
+    fprintf(stderr, "u-dma-buf device 'udmabuf%d' not found\n", udmabuf_num);
+    return ret;
+  }
+
+  /* Read the "phys_addr" through the sysfs, opening the file in read-only */
+  memset(tmp_path, '\0', sizeof(tmp_path));
+  snprintf(tmp_path, sizeof(tmp_path), "%s/udmabuf%d/phys_addr", udmabuf_root,
+           udmabuf_num);
+  if ((fd = open(tmp_path, O_RDONLY)) < 0) {
+    perror("open");
+    return -1;
+  }
+  /* Store the address in attr */
+  memset(attr, 0, sizeof(attr));
+  if (read(fd, attr, sizeof(attr)) < 0) {
+    perror("read");
+    close(fd);
+    return -1;
+  }
+  sscanf(attr, "%lx", phys_addr);
+  close(fd);
+  /* Read the "size" through the sysfs, opening the file in read-only */
+  memset(tmp_path, '\0', sizeof(tmp_path));
+  snprintf(tmp_path, sizeof(tmp_path), "%s/udmabuf%d/size", udmabuf_root,
+           udmabuf_num);
+  if ((fd = open(tmp_path, O_RDONLY)) < 0) {
+    perror("open");
+    return -1;
+  }
+  /* Store the size in attr */
+  memset(attr, 0, sizeof(attr));
+  if (read(fd, attr, sizeof(attr)) < 0) {
+    perror("read");
+    close(fd);
+    return -1;
+  }
+  sscanf(attr, "%ld", size);
+  close(fd);
+
+  return 0;
+}
+
