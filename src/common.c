@@ -395,4 +395,56 @@ exit:
   return ret;
 }
 
+/**
+* Set the state of the trace to suspended
+*/
+void trace_suspend_resume_callback(void) { set_trace_state(suspended_state); }
 
+/**
+* Start a trace session. CoreSight and decoder must be initialized.
+*/
+int start_trace(pid_t pid, bool use_pid_trace)
+{
+  int ret;
+  /* Set the cpu affinity, binding the process to the corresponding cpu */
+  if ((ret = set_cpu_affinity(trace_cpu, pid)) < 0) {
+    fprintf(stderr, "set_cpu_affinity() failed\n");
+    goto exit;
+  }
+
+  /* Allocate the trace buffer */
+  alloc_trace_buf();
+
+  /* Enable the CoreSight trace */
+  child_pid = pid;
+  if ((ret = enable_cs_trace(use_pid_trace ? pid : 0)) < 0) {
+    fprintf(stderr, "enable_cs_trace() failed\n");
+    goto exit;
+  }
+
+  /* Set the trace to running, effectively launching collection */
+  set_trace_state(running_state);
+
+exit:
+  return ret;
+}
+
+/**
+* Stop the trace session. CoreSight and decoder are still available.
+*/
+int stop_trace(bool disable_all)
+{
+  int ret;
+
+  /* Disable all components */
+  if ((ret = disable_cs_trace(disable_all)) < 0) {
+    fprintf(stderr, "disable_cs_trace() failed\n");
+    goto exit;
+  }
+
+  /* Set the trace to ready */
+  set_trace_state(ready_state);
+
+exit:
+  return ret;
+}
