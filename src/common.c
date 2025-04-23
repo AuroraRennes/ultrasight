@@ -422,6 +422,7 @@ int start_trace(pid_t pid, bool use_pid_trace)
     goto exit;
   }
 
+
   /* Set the trace to running, effectively launching collection */
   set_trace_state(running_state);
 
@@ -447,4 +448,98 @@ int stop_trace(bool disable_all)
 
 exit:
   return ret;
+}
+
+/**
+* Initialize trace. Called on the first time and only once.
+*/
+int init_trace(pid_t parent_pid, pid_t pid)
+{
+  int ret;
+  int preferred_cpu;
+
+  ret = -1;
+
+  /* Initialize mutexes and condition variables */
+  pthread_mutex_init(&trace_mutex, NULL);
+  pthread_mutex_init(&trace_state_mutex, NULL);
+  pthread_mutex_init(&trace_event_mutex, NULL);
+  pthread_cond_init(&trace_event_cond, NULL);
+
+  /* If the trace cpu is not set, tries to link the parent pid to its preferred CPU (if there is no, use the first one)*/
+  if (trace_cpu < 0) {
+    if ((preferred_cpu = get_preferred_cpu(parent_pid)) < 0) {
+      fprintf(stderr, "INFO: Failed to get preferred CPU\n");
+      /* Some boards is not supported by get_preferred_cpu() */
+      if ((preferred_cpu = find_free_cpu() < 0)) {
+        fprintf(stderr, "WARNING: Failed to find free CPU. Use #%d\n",
+                DEFAULT_TRACE_CPU);
+      }
+    }
+    trace_cpu = preferred_cpu >= 0 ? preferred_cpu : DEFAULT_TRACE_CPU;
+  }
+
+  /* Get udmabuf information (address and size), storing them in their respective variables */
+  if (get_udmabuf_info(udmabuf_num, &etr_ram_addr, &etr_ram_size) < 0) {
+    fprintf(stderr, "Failed to get u-dma-buf info\n");
+    goto exit;
+  }
+
+  /* Extract and store memory mapping information */
+  if ((range_count = setup_map_info(pid, map_info, RANGE_MAX)) < 0) {
+    fprintf(stderr, "setup_map_info() failed\n");
+    goto exit;
+  }
+
+  /* Setup board variables for a given board defined in known_board.h */
+  if (setup_named_board(board_name, &board, &devices, known_boards) < 0) {
+    fprintf(stderr, "setup_named_board() failed\n");
+    goto exit;
+  }
+
+  /* Get the trace ID */
+  if ((trace_id = get_trace_id(trace_cpu)) < 0) {
+    goto exit;
+  }
+
+  /* Mark the trace as ready */
+  set_trace_state(ready_state);
+  ret = 0;
+
+exit:
+  /* If any of the above steps failed, run the shutdown function */
+  if (ret != 0) {
+    cs_shutdown();
+  }
+
+  return ret;
+}
+
+/**
+* Finalize trace. Called after all trace sessions finished.
+*/
+void fini_trace(void)
+{
+  /* Fetch the trace in the buffer */
+  fetch_trace();
+
+  /* Export the trace to a file */
+  export_trace(DEFAULT_TRACE_NAME);
+
+  /* If needed, dump memory mappings to stderr */
+  if (registration_verbose > 0) {
+    dump_map_info(stderr, map_info, range_count);
+  }
+
+  /* Free the trace buffer */
+  free_trace_buf();
+
+  /* Shutdown all CoreSight components */
+  cs_shutdown();
+
+  /* Destroy mutexes and conditional variables */
+  pthread_cond_destroy(&trace_event_cond);
+  pthread_mutex_destroy(&trace_event_mutex);
+  pthread_mutex_destroy(&trace_state_mutex);
+  pthread_mutex_destroy(&trace_mutex);
 }
