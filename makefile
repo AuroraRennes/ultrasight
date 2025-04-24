@@ -59,7 +59,7 @@ endif
 
 DATE:=$(shell date +%Y-%m-%d-%H-%M-%S)
 DIR?=trace/$(DATE)
-TRACEE?=tests/fib
+TRACEE?=tests/stm_write
 TRACEE_ARGS?=
 
 $(CS_TRACE): $(CS_TRACE_OBJS) $(LIBCSACCESS) $(LIBCSACCUTIL)

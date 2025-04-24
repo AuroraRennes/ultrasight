@@ -273,6 +273,12 @@ int configure_trace(const struct board *board, struct cs_devices_t *devices,
     }
   }
 
+  /* Set STM trace ID */
+  if (cs_set_trace_source_id(devices->itm, 0x20) < 0) {
+    fprintf(stderr, "** failed to set valid trace source ID STM\n");
+    return -1;
+  }
+
   /* Permanently unlocks devices, starting from the top */
   cs_checkpoint();
 
@@ -346,7 +352,7 @@ int enable_trace(const struct board *board, struct cs_devices_t *devices)
       return -1;
     }
     if (cs_tmc_hw_fifo_enable(devices->trace_sinks[i], /*bufwm=*/0x0) != 0) {
-      printf("Could not enable sinks as hw fifo %d/%d\n", i + 1,
+      fprintf(stderr, "Could not enable sinks as hw fifo %d/%d\n", i + 1,
              devices->num_trace_sinks);
       return -1;
     }
@@ -356,6 +362,15 @@ int enable_trace(const struct board *board, struct cs_devices_t *devices)
   for (i = 0; i < board->n_cpu; ++i) {
     cs_trace_enable(devices->ptm[i]);
   }
+
+  /* Enable STM */
+  if (cs_trace_swstim_enable_all_ports(devices->itm) < 0) {
+    return -1;
+  }
+  if (cs_trace_swstim_set_sync_repeat(devices->itm, 32) < 0) {
+    return -1;
+  }
+  cs_trace_enable(devices->itm);
 
   /* Permanently unlocks devices, starting from the top */
   cs_checkpoint();
@@ -393,6 +408,10 @@ int disable_trace(const struct board *board, struct cs_devices_t *devices)
   for (i = 0; i < board->n_cpu; ++i) {
     cs_trace_disable(devices->ptm[i]);
   }
+
+  /* Disable STM */
+  cs_trace_disable(devices->itm);
+
   /* Disable intermediate sinks (ETFs) */
   for (i = 0; i < devices->num_trace_sinks; i++) {
     if (devices->trace_sinks[i]) {

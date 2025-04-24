@@ -280,7 +280,7 @@ static int enable_cs_trace(pid_t pid)
 
   /* Export the config in snapshot format if needed */
   if (export_config) {
-    do_dump_config(board, &devices, 0);
+    do_dump_config(board, &devices, 1);
   }
 
   ret = 0;

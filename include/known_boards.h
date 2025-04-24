@@ -71,10 +71,11 @@ static int do_registration_zcu104(struct cs_devices_t *devices)
   etf1 = cs_device_get(0xFE940000);
   cs_atb_register(funnel1, 0, etf1, 0);
 
-  /* Funnel0 feeds into funnel2 on port 0, ETF1 on port 2 and STM on port 3 */
+  /* STM feeds into funnel2 on port 0, ETF1 on port 2 and funnel0 on port 3
+   * NOTE: This port are not mentionned (or could not find a reference) in the TRM */
   funnel2 = cs_device_get(0xFE930000);
+  cs_atb_register(stm, 0, funnel2, 0);
   cs_atb_register(etf1, 0, funnel2, 2);
-  cs_atb_register(stm, 0, funnel2, 3);
   /* R5 input would be here! */
 
   /* Funnel 2 connects into ETF2 */
