@@ -24,10 +24,11 @@ int main() {
         return 1;
     }
 
-    volatile uint32_t *stm_port0 = (volatile uint32_t *)((char *)map_base + STM_PORT_OFFSET(0));
-    *stm_port0 = 0x12345678;
-
-    printf("Wrote 0x12345678 to STM port 0\n");
+    volatile uint64_t *stm_port0 = (volatile uint64_t *)((char *)map_base + STM_PORT_OFFSET(0));
+    *stm_port0 = 0xFEDCBA9876543210;
+    printf("Wrote 0xFEDCBA9876543210 to STM port 0\n");
+    *stm_port0 = 0x0123456789ABCDEF;
+    printf("Wrote 0x0123456789ABCDEF to STM port 0\n");
 
     munmap(map_base, STM_MAP_SIZE);
     close(fd);

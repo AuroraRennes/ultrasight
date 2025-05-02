@@ -33,8 +33,8 @@
 #include "config.h"
 
 /**
-Extern value definitions
-*/
+ * Extern value definitions
+ */
 #define DEFAULT_TRACE_BITMAP_SIZE_POW2 (16)
 #define DEFAULT_TRACE_BITMAP_SIZE (1U << (DEFAULT_TRACE_BITMAP_SIZE_POW2))
 extern int registration_verbose;
@@ -46,9 +46,9 @@ extern unsigned char *trace_bitmap;
 extern unsigned int trace_bitmap_size;
 
 /**
-* Main logic, child is the traced program, parent controls the setup and
-* launches it.
-*/
+ * Main logic, child is the traced program, parent controls the setup and
+ * launches it.
+ */
 void child(char *argv[])
 {
   long ret;
@@ -59,16 +59,17 @@ void child(char *argv[])
   }
 
   /* Redefine LD_PRELOAD to map/unmap the stm region in the process */
-  setenv("LD_PRELOAD", "/home/aurora/qtests/ultrasight/lib/libstm_preload.so", 1);
+  setenv("LD_PRELOAD", "/home/aurora/qtests/ultrasight/lib/libstm_preload.so",
+         1);
   /* execute the traced program, passed as arguments after -- in the main CLI */
   execvpe(argv[0], argv, environ);
 }
 
 /**
-* Parent process waiting for the child process to stop, initializing tracing,
-* then sending a CONT signal to the child. When the child stops, cleans up the
-* trace.
-*/
+ * Parent process waiting for the child process to stop, initializing tracing,
+ * then sending a CONT signal to the child. When the child stops, cleans up the
+ * trace.
+ */
 void parent(pid_t pid, int *child_status)
 {
   int wstatus;
@@ -115,8 +116,8 @@ void parent(pid_t pid, int *child_status)
 }
 
 /**
-* CLI usage display
-*/
+ * CLI usage display
+ */
 static void usage(char *argv0)
 {
   fprintf(stderr, "Usage: %s [OPTIONS] -- EXE [ARGS]\n", argv0);
@@ -140,9 +141,9 @@ static void usage(char *argv0)
 }
 
 /**
-* Main function, parses the options using getopt, extracts the tracee program and
-* launch it using the parent and child functions
-*/
+ * Main function, parses the options using getopt, extracts the tracee program
+ * and launch it using the parent and child functions
+ */
 int main(int argc, char *argv[])
 {
   const struct option long_options[] = {

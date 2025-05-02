@@ -118,8 +118,8 @@ int get_trace_id(int cpu)
 }
 
 /**
-* Update trace event and notify
-*/
+ * Update trace event and notify
+ */
 static void signal_trace_event(trace_event_t event)
 {
   pthread_mutex_lock(&trace_event_mutex);
@@ -129,8 +129,8 @@ static void signal_trace_event(trace_event_t event)
 }
 
 /**
-* Wait for a given trace event
-*/
+ * Wait for a given trace event
+ */
 static void wait_trace_event(trace_event_t event)
 {
   pthread_mutex_lock(&trace_event_mutex);
@@ -141,8 +141,8 @@ static void wait_trace_event(trace_event_t event)
 }
 
 /**
-* Change the trace state in a thread-safe manner
-*/
+ * Change the trace state in a thread-safe manner
+ */
 static void set_trace_state(trace_state_t new_state)
 {
   trace_state_t old_state;
@@ -180,8 +180,8 @@ static void set_trace_state(trace_state_t new_state)
 }
 
 /**
-* Allocate the trace buffer through mmap
-*/
+ * Allocate the trace buffer through mmap
+ */
 static int alloc_trace_buf(void)
 {
   trace_buf = mmap(NULL, DEFAULT_TRACE_SIZE, PROT_READ | PROT_WRITE,
@@ -197,9 +197,9 @@ static int alloc_trace_buf(void)
 }
 
 /**
-* Free trace buffer, emptying the device.etb then unmapping the corresponding
-* buffer.
-*/
+ * Free trace buffer, emptying the device.etb then unmapping the corresponding
+ * buffer.
+ */
 static void free_trace_buf(void)
 {
   /* FIXME: Make it better */
@@ -214,8 +214,8 @@ static void free_trace_buf(void)
 }
 
 /**
-* Export trace to file name "cwd/trace_name"
-*/
+ * Export trace to file name "cwd/trace_name"
+ */
 static int export_trace(const char *trace_name)
 {
   int ret;
@@ -251,8 +251,8 @@ exit:
 }
 
 /**
-* Enable the CoreSight trace, locking the mutex
-*/
+ * Enable the CoreSight trace, locking the mutex
+ */
 static int enable_cs_trace(pid_t pid)
 {
   int ret;
@@ -300,8 +300,8 @@ exit:
 }
 
 /**
-* Disable CoreSight trace, retries several times before giving up
-*/
+ * Disable CoreSight trace, retries several times before giving up
+ */
 static int disable_cs_trace(bool disable_all)
 {
   int ret;
@@ -399,8 +399,8 @@ static int disable_cs_trace(bool disable_all)
 // }
 
 /**
-* Fetch the trace data from the ETB
-*/
+ * Fetch the trace data from the ETB
+ */
 int fetch_trace(void)
 {
   int ret;
@@ -416,7 +416,8 @@ int fetch_trace(void)
   /* Acquire trace mutex */
   pthread_mutex_lock(&trace_mutex);
 
-  /* Get the number of bytes that have not yet been destructively read from the buffer */
+  /* Get the number of bytes that have not yet been destructively read from the
+   * buffer */
   etb = devices.etb;
   len = cs_get_buffer_unread_bytes(etb);
 
@@ -464,13 +465,13 @@ exit:
 }
 
 /**
-* Set the state of the trace to suspended
-*/
+ * Set the state of the trace to suspended
+ */
 void trace_suspend_resume_callback(void) { set_trace_state(suspended_state); }
 
 /**
-* Start a trace session. CoreSight and decoder must be initialized.
-*/
+ * Start a trace session. CoreSight and decoder must be initialized.
+ */
 int start_trace(pid_t pid, bool use_pid_trace)
 {
   int ret;
@@ -509,8 +510,8 @@ exit:
 }
 
 /**
-* Stop the trace session. CoreSight and decoder are still available.
-*/
+ * Stop the trace session. CoreSight and decoder are still available.
+ */
 int stop_trace(bool disable_all)
 {
   int ret;
@@ -529,8 +530,8 @@ exit:
 }
 
 /**
-* Initialize trace. Called on the first time and only once.
-*/
+ * Initialize trace. Called on the first time and only once.
+ */
 int init_trace(pid_t parent_pid, pid_t pid)
 {
   int ret;
@@ -544,7 +545,8 @@ int init_trace(pid_t parent_pid, pid_t pid)
   pthread_mutex_init(&trace_event_mutex, NULL);
   pthread_cond_init(&trace_event_cond, NULL);
 
-  /* If the trace cpu is not set, tries to link the parent pid to its preferred CPU (if there is no, use the first one)*/
+  /* If the trace cpu is not set, tries to link the parent pid to its preferred
+   * CPU (if there is no, use the first one)*/
   if (trace_cpu < 0) {
     if ((preferred_cpu = get_preferred_cpu(parent_pid)) < 0) {
       fprintf(stderr, "INFO: Failed to get preferred CPU\n");
@@ -557,7 +559,8 @@ int init_trace(pid_t parent_pid, pid_t pid)
     trace_cpu = preferred_cpu >= 0 ? preferred_cpu : DEFAULT_TRACE_CPU;
   }
 
-  /* Get udmabuf information (address and size), storing them in their respective variables */
+  /* Get udmabuf information (address and size), storing them in their
+   * respective variables */
   if (get_udmabuf_info(udmabuf_num, &etr_ram_addr, &etr_ram_size) < 0) {
     fprintf(stderr, "Failed to get u-dma-buf info\n");
     goto exit;
@@ -575,10 +578,10 @@ int init_trace(pid_t parent_pid, pid_t pid)
     goto exit;
   }
 
-  /** /!\ NOTE: This part was intended to setup the STM region mapping through the parent
-  *             but the mapping is not accessible from the child process. It has been
-  *             moved to a preload library instead.
-  */
+  /** /!\ NOTE: This part was intended to setup the STM region mapping through
+   * the parent but the mapping is not accessible from the child process. It has
+   * been moved to a preload library instead.
+   */
 
   /* Setup STM region */
 #if 0
@@ -607,8 +610,8 @@ exit:
 }
 
 /**
-* Finalize trace. Called after all trace sessions finished.
-*/
+ * Finalize trace. Called after all trace sessions finished.
+ */
 void fini_trace(void)
 {
   /* Fetch the trace in the buffer */
@@ -628,10 +631,10 @@ void fini_trace(void)
   /* Shutdown all CoreSight components */
   cs_shutdown();
 
-  /** /!\ NOTE: This part was intended to unmap the STM region mapping through the parent
-  *             but the mapping is not accessible from the child process. It has been
-  *             moved to a preload library instead.
-  */
+  /** /!\ NOTE: This part was intended to unmap the STM region mapping through
+   * the parent but the mapping is not accessible from the child process. It has
+   * been moved to a preload library instead.
+   */
 
   /* Cleanup the STM region */
   clean_stm_region(&fd, map_base);

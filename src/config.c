@@ -29,8 +29,8 @@ extern size_t etr_ram_size;
 extern int registration_verbose;
 
 /**
-* Set the ETB to manual flush and wait for the end of the trace.
-*/
+ * Set the ETB to manual flush and wait for the end of the trace.
+ */
 void cs_etb_flush_and_wait_stop(struct cs_devices_t *devices)
 {
   unsigned int ffcr_val, status_val;
@@ -54,8 +54,9 @@ void cs_etb_flush_and_wait_stop(struct cs_devices_t *devices)
 }
 
 /**
-* Define the address ranges of the ETMv4 by configuring the address comparators.
-*/
+ * Define the address ranges of the ETMv4 by configuring the address
+ * comparators.
+ */
 static void set_etmv4_addr_range(struct map_info *range,
                                  struct _adrcmp *addr_comp,
                                  unsigned int acc_type_ex)
@@ -85,8 +86,8 @@ static void set_etmv4_addr_range(struct map_info *range,
 }
 
 /**
-* Configure the ETMv4 registers
-*/
+ * Configure the ETMv4 registers
+ */
 static int configure_etmv4_addr_range_cid(cs_device_t etm,
                                           struct map_info *range,
                                           int range_count, unsigned long cid)
@@ -116,10 +117,10 @@ static int configure_etmv4_addr_range_cid(cs_device_t etm,
   }
 
   /** Configure specific features (if supported by the device):
-  *    - return stack: enable a return stack of addresses for faster tracing
-  *    - branch broadcast: add address packets before indirect jumps
-  *    - cycle count: add cycle counting packets
-  */
+   *    - return stack: enable a return stack of addresses for faster tracing
+   *    - branch broadcast: add address packets before indirect jumps
+   *    - cycle count: add cycle counting packets
+   */
   if (return_stack) tconfig.configr.bits.rs = 1; /* set the return stack */
   if (branch_broadcast)
     tconfig.configr.bits.bb = 1;                 /* set the branch broadcast */
@@ -150,7 +151,8 @@ static int configure_etmv4_addr_range_cid(cs_device_t etm,
 
   tconfig.flags |= CS_ETMC_ADDR_COMP;
 
-  /* Mark the configuration ready to be written back into the above registers on 'put' */
+  /* Mark the configuration ready to be written back into the above registers on
+   * 'put' */
   cs_etm_config_put_ex(etm, &tconfig);
 
   /* If needed, show the resulting configuration */
@@ -169,8 +171,8 @@ static int configure_etmv4_addr_range_cid(cs_device_t etm,
 }
 
 /**
-* Printing the ETM config
-*/
+ * Printing the ETM config
+ */
 void show_etm_config(cs_device_t etm)
 {
   /* ETMv4 config type */
@@ -192,8 +194,8 @@ void show_etm_config(cs_device_t etm)
 }
 
 /**
-* Initialize ETM for version 4
-*/
+ * Initialize ETM for version 4
+ */
 int init_etm(cs_device_t dev)
 {
   int rc;
@@ -239,8 +241,8 @@ int init_etm(cs_device_t dev)
 }
 
 /**
-* Configure the trace, setup the different elements.
-*/
+ * Configure the trace, setup the different elements.
+ */
 int configure_trace(const struct board *board, struct cs_devices_t *devices,
                     struct map_info *range, int range_count, pid_t pid)
 {
@@ -317,8 +319,8 @@ int configure_trace(const struct board *board, struct cs_devices_t *devices,
 }
 
 /**
-* Trace enable, setting up and enabling ETR, ETF
-*/
+ * Trace enable, setting up and enabling ETR, ETF
+ */
 int enable_trace(const struct board *board, struct cs_devices_t *devices)
 {
   int i, error_count;
@@ -353,7 +355,7 @@ int enable_trace(const struct board *board, struct cs_devices_t *devices)
     }
     if (cs_tmc_hw_fifo_enable(devices->trace_sinks[i], /*bufwm=*/0x0) != 0) {
       fprintf(stderr, "Could not enable sinks as hw fifo %d/%d\n", i + 1,
-             devices->num_trace_sinks);
+              devices->num_trace_sinks);
       return -1;
     }
   }
@@ -391,8 +393,8 @@ int enable_trace(const struct board *board, struct cs_devices_t *devices)
 }
 
 /**
-* Trace disable, flushing the main buffer, then disabling sources and sinks
-*/
+ * Trace disable, flushing the main buffer, then disabling sources and sinks
+ */
 int disable_trace(const struct board *board, struct cs_devices_t *devices)
 {
   int i, error_count;
@@ -439,8 +441,8 @@ int disable_trace(const struct board *board, struct cs_devices_t *devices)
 }
 
 /**
-* Enable all (and only them) sinks in the system (ETR + 2 ETFs)
-*/
+ * Enable all (and only them) sinks in the system (ETR + 2 ETFs)
+ */
 int enable_trace_sinks_only(struct cs_devices_t *devices)
 {
   int i, error_count;
@@ -483,8 +485,8 @@ int enable_trace_sinks_only(struct cs_devices_t *devices)
 }
 
 /**
-* Disable all (and only them) sinks in the system (ETR + 2 ETFs)
-*/
+ * Disable all (and only them) sinks in the system (ETR + 2 ETFs)
+ */
 int disable_trace_sinks_only(struct cs_devices_t *devices)
 {
   int i, error_count;
