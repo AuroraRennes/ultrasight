@@ -42,7 +42,7 @@ CFLAGS:= \
 	-lpthread \
 
 ifneq ($(strip $(DEBUG)),)
-	CFLAGS+=-g -O0
+	CFLAGS+=-O0
 else
 	CFLAGS+=-Ofast
 endif
@@ -59,8 +59,14 @@ endif
 
 DATE:=$(shell date +%Y-%m-%d-%H-%M-%S)
 DIR?=trace/$(DATE)
-TRACEE?=tests/stm_write
+TRACEE?=tests/fib
 TRACEE_ARGS?=
+
+TESTS_C:=$(wildcard tests/*.c)
+TESTS:=$(patsubst tests/%.c, tests/%,$(TESTS_C))
+
+LIB_DIR:=lib
+LIBSTMPRELOAD:=$(LIB_DIR)/libstm_preload.so
 
 $(CS_TRACE): $(CS_TRACE_OBJS) $(LIBCSACCESS) $(LIBCSACCUTIL)
 	$(CC) -o $@ $^ $(CFLAGS)
@@ -82,11 +88,18 @@ libcsal:
 $(LIBCSACCESS): libcsal
 $(LIBCSACCUTIL): libcsal
 
+$(LIBSTMPRELOAD): src/stm_preload.c
+	mkdir -p lib
+	$(CC) -fPIC -shared $^ -o $@ -g -ffixed-x28
+
+tests/%: tests/%.c $(LIBSTMPRELOAD)
+	$(CC) -o $@ $< $(CFLAGS)
+
 format:
 	clang-format -i $(INC)/*.h src/*.c
 
 clean:
-	rm -f $(CS_TRACE_OBJS) $(CS_TRACE) $(TESTS)
+	rm -f $(CS_TRACE_OBJS) $(CS_TRACE) $(TESTS) $(LIBSTMPRELOAD)
 
 dist-clean:
 	$(MAKE) -C $(CSAL_BASE) clean $(CSAL_MAKE_FLAGS)
