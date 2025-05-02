@@ -51,5 +51,7 @@ int get_preferred_cpu(pid_t pid);
 int find_free_cpu(void);
 int set_cpu_affinity(int cpu, pid_t pid);
 int get_udmabuf_info(int udmabuf_num, unsigned long *phys_addr, size_t *size);
+int setup_stm_region(int *fd, void *map_base);
+void clean_stm_region(int *fd, void *map_base);
 
 #endif /* CS_TRACE_UTILS_H */

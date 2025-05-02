@@ -1,7 +1,8 @@
+.clangd
 *.o
 cs-trace
 cstrace.bin
+lib/
 trace/
 tests/*
 !tests/*.c
-.clangd

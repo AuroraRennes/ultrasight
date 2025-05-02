@@ -40,6 +40,8 @@
 
 #define MAX_LINE 8192
 #define MAX_CPUS 4096
+#define STM_STIMULUS_BASE 0xF8000000UL
+#define STM_MAP_SIZE 0x1000  // map 4 KB
 
 /* ============== DEBUG ============== */
 
@@ -557,4 +559,51 @@ int setup_map_info(pid_t pid, struct map_info *map_info, int info_count_max)
   }
 
   return count;
+}
+
+/* ============== STM ============== */
+
+/**
+ * /!\ NOTE: The two functions beneath were meant to be used
+ * in the parent process during the setup and teardown of the trace,
+ * mapping the correct STM region before the child process (tracee)
+ * executes.
+ * However, mappings are not shared through the execvp() call. A preload
+ * library with constructor/destructor is used instead, see lib/stm_preload.c.
+ */
+
+/**
+ * Map the STM stimulus region in memory and store the stimulus base address
+ */
+int setup_stm_region(int *fd, void *map_base)
+{
+  /* Open /dev/mem and get its file descriptor */
+  *fd = open("/dev/mem", O_RDWR | O_SYNC);
+  if (*fd < 0) {
+    fprintf(stderr, "could not open /dev/mem for STM setup\n");
+    return -1;
+  }
+
+  map_base = mmap(NULL, STM_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, *fd,
+                  STM_STIMULUS_BASE);
+  if (map_base == MAP_FAILED) {
+    fprintf(stderr, "could not mmap for STM setup\n");
+    close(*fd);
+    return -1;
+  }
+
+  /* Write the address of the STM stimulus base into x28 */
+  __asm__ __volatile__("mov x28, %0" ::"r"(STM_STIMULUS_BASE));
+
+  return 0;
+}
+
+/**
+ * Cleanup the STM file descriptor and memory map
+ */
+void clean_stm_region(int *fd, void *map_base)
+{
+  /* Unmap the region */
+  munmap(map_base, STM_MAP_SIZE);
+  close(*fd);
 }

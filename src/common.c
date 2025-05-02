@@ -85,6 +85,9 @@ struct map_info map_info[RANGE_MAX];
 
 bool fifo_sw = false;
 
+int fd = 0;
+void *map_base = NULL;
+
 unsigned char *trace_bitmap = NULL;
 unsigned int trace_bitmap_size = 0;
 
@@ -572,6 +575,19 @@ int init_trace(pid_t parent_pid, pid_t pid)
     goto exit;
   }
 
+  /** /!\ NOTE: This part was intended to setup the STM region mapping through the parent
+  *             but the mapping is not accessible from the child process. It has been
+  *             moved to a preload library instead.
+  */
+
+  /* Setup STM region */
+#if 0
+  if (setup_stm_region(&fd, map_base) < 0) {
+    fprintf(stderr, "setup_stm_region() failed\n");
+    goto exit;
+  }
+#endif
+
   /* Get the trace ID */
   if ((trace_id = get_trace_id(trace_cpu)) < 0) {
     goto exit;
@@ -611,6 +627,14 @@ void fini_trace(void)
 
   /* Shutdown all CoreSight components */
   cs_shutdown();
+
+  /** /!\ NOTE: This part was intended to unmap the STM region mapping through the parent
+  *             but the mapping is not accessible from the child process. It has been
+  *             moved to a preload library instead.
+  */
+
+  /* Cleanup the STM region */
+  clean_stm_region(&fd, map_base);
 
   /* Destroy mutexes and conditional variables */
   pthread_cond_destroy(&trace_event_cond);
