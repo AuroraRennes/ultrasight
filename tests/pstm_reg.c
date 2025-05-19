@@ -1,8 +1,10 @@
 #include <stdio.h>
 
 int main() {
-    void* x28_val;
-    __asm__ __volatile__("mov %0, x28" : "=r"(x28_val));
-    printf("[tracee] x28: %p\n", x28_val);
+    void* x26_val;
+    __asm__ __volatile__("mov %0, x26" : "=r"(x26_val));
+#ifdef __GLIBC__
+    printf("[tracee] x26: %p\n", x26_val);
+#endif
     return 0;
 }

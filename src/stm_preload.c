@@ -47,8 +47,8 @@ __attribute__((constructor)) void preload_stm_region(void)
   fprintf(stderr, "[stm_preload] STM region mapped at %p, TLS set\n",
           mapped_region);
 
-  /* Load the TLS pointer into x28 */
-  __asm__ __volatile__("mov x28, %0" ::"r"(stm_region_ptr));
+  /* Load the TLS pointer into x26 */
+  __asm__ __volatile__("mov x26, %0" ::"r"(stm_region_ptr));
 }
 
 /* __attribute__((constructor)) tells GCC/Clang to run this function

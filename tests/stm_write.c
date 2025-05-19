@@ -26,9 +26,13 @@ int main() {
 
     volatile uint64_t *stm_port0 = (volatile uint64_t *)((char *)map_base + STM_PORT_OFFSET(0));
     *stm_port0 = 0xFEDCBA9876543210;
+#ifdef __GLIBC__
     printf("Wrote 0xFEDCBA9876543210 to STM port 0\n");
+#endif
     *stm_port0 = 0x0123456789ABCDEF;
+#ifdef __GLIBC__
     printf("Wrote 0x0123456789ABCDEF to STM port 0\n");
+#endif
 
     munmap(map_base, STM_MAP_SIZE);
     close(fd);

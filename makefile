@@ -6,6 +6,34 @@ SHELL:=bash
 
 DEFAULT_BOARD?="ZCU-104"
 
+# Check if CUSTOM_LLVM_DIR is set
+ifeq ($(origin CUSTOM_CC_BUILD_DIR), undefined)
+$(warning [-] CUSTOM_CC_BUILD_DIR is not defined, using base CC)
+CUSTOM_CC := $(CC)
+else
+$(info [+] Custom build directory set!)
+CUSTOM_CC := $(CUSTOM_CC_BUILD_DIR)/bin/clang
+CUSTOM_LD := $(CUSTOM_CC_BUILD_DIR)/bin/ld.lld
+endif
+
+# Check if CUSTOM_LIBC is set
+ifeq ($(origin CUSTOM_LIBC), undefined)
+$(warning [-] CUSTOM_LIBC is not defined, using base libc.)
+else
+$(info [+] Custom libc set!)
+TESTS_CFLAGS := \
+  -static \
+  -nostdlib \
+  -fuse-ld=$(CUSTOM_LD) \
+  -isystem $(CUSTOM_LIBC)/sysroot/include \
+  $(CUSTOM_LIBC)/sysroot/lib/crt1.o \
+  $(CUSTOM_LIBC)/sysroot/lib/crti.o \
+  -L$(CUSTOM_LIBC)/sysroot/lib -lc -lm \
+  $(CUSTOM_LIBC)/sysroot/lib/crtn.o
+endif
+
+
+# CSAL libraries definitions
 CSAL_BASE:=csal
 CSAL_ARCH:=arm64
 ifneq ($(strip $(DEBUG)),)
@@ -19,6 +47,7 @@ CSAL_MAKE_FLAGS:=ARCH=$(CSAL_ARCH) NO_CHECK=1 NO_DIAG=1
 LIBCSACCESS:=$(CSAL_LIB)/libcsaccess.a
 LIBCSACCUTIL:=$(CSAL_LIB)/libcsacc_util.a
 
+# ultrasight files
 INC:=include
 SRC:=src
 
@@ -48,22 +77,30 @@ else
 endif
 
 CS_TRACE:=cs-trace
-CS_TRACE_FLAGS?=
+CS_TRACE_FLAGS?=--export
 CS_TRACE_OBJS:= \
 	$(OBJS) \
 	$(SRC)/cs-trace.o
 
 ifneq ($(strip $(DEBUG)),)
-  CS_TRACE_FLAGS+=--export --verbose=0
+  CS_TRACE_FLAGS+=--verbose=0
 endif
 
+# make trace values, setting up a new trace folder
 DATE:=$(shell date +%Y-%m-%d-%H-%M-%S)
 DIR?=trace/$(DATE)
 TRACEE?=tests/fib
 TRACEE_ARGS?=
 
+# test flags and compilation instructions
 TESTS_C:=$(wildcard tests/*.c)
 TESTS:=$(patsubst tests/%.c, tests/%,$(TESTS_C))
+TESTS_CFLAGS+= \
+	-std=c11 \
+	-Wall \
+
+# Decoder from the OpenCSD test examples
+DECODER := trc_pkt_lister
 
 LIB_DIR:=lib
 LIBSTMPRELOAD:=$(LIB_DIR)/libstm_preload.so
@@ -71,12 +108,13 @@ LIBSTMPRELOAD:=$(LIB_DIR)/libstm_preload.so
 $(CS_TRACE): $(CS_TRACE_OBJS) $(LIBCSACCESS) $(LIBCSACCUTIL)
 	$(CC) -o $@ $^ $(CFLAGS)
 
-trace: $(CS_TRACE) $(TESTS)
+trace: $(CS_TRACE) $(TESTS) disable_aslr
 	mkdir -p $(DIR) && \
 	cd $(DIR) && \
 	sudo $(realpath $(CS_TRACE)) $(CS_TRACE_FLAGS) -- $(realpath $(TRACEE)) $(TRACEE_ARGS)
+	$(realpath $(DECODER)) -ss_dir $(DIR) -logfile -logfilename $(DIR)/trace.opencsd
 
-debug: $(CS_TRACE) $(TESTS)
+debug: $(CS_TRACE) $(TESTS) disable_aslr
 	mkdir -p $(DIR) && \
 	cd $(DIR) && \
 	sudo gdb --args $(realpath $(CS_TRACE)) $(CS_TRACE_FLAGS) -- $(realpath $(TRACEE)) $(TRACEE_ARGS)
@@ -93,13 +131,25 @@ $(LIBSTMPRELOAD): src/stm_preload.c
 	$(CC) -fPIC -shared $^ -o $@ -g -ffixed-x28
 
 tests/%: tests/%.c $(LIBSTMPRELOAD)
-	$(CC) -o $@ $< $(CFLAGS)
+	$(CUSTOM_CC) $(TESTS_CFLAGS) -o $@ $<
 
 format:
 	clang-format -i $(INC)/*.h src/*.c
 
+disable_aslr:
+	@echo "Checking ASLR status..."
+	@if [ "$$(cat /proc/sys/kernel/randomize_va_space)" -ne 0 ]; then \
+		echo "ASLR is enabled, disabling it..."; \
+		sudo sysctl -w kernel.randomize_va_space=0; \
+	else \
+		echo "ASLR is already disabled."; \
+	fi
+
 clean:
 	rm -f $(CS_TRACE_OBJS) $(CS_TRACE) $(TESTS) $(LIBSTMPRELOAD)
+
+clean-trace:
+	rm -rf trace
 
 dist-clean:
 	$(MAKE) -C $(CSAL_BASE) clean $(CSAL_MAKE_FLAGS)

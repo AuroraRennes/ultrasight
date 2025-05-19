@@ -21,7 +21,7 @@
 #define SHOW_ETM_CONFIG 0
 
 const bool return_stack = false;
-const bool branch_broadcast = false;
+const bool branch_broadcast = true;
 const bool cycle_count = false;
 
 extern unsigned long etr_ram_addr;
