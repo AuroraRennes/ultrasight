@@ -89,18 +89,21 @@ endif
 # make trace values, setting up a new trace folder
 DATE:=$(shell date +%Y-%m-%d-%H-%M-%S)
 DIR?=trace/$(DATE)
-TRACEE?=tests/fib
+TRACEE?=$(TESTS_DIR)/fib
 TRACEE_ARGS?=
 
 # test flags and compilation instructions
-TESTS_C:=$(wildcard tests/*.c)
-TESTS:=$(patsubst tests/%.c, tests/%,$(TESTS_C))
+TESTS_DIR:= tests
+TESTS_C:=$(wildcard $(TESTS_DIR)/*.c)
+TESTS:=$(patsubst $(TESTS_DIR)/%.c, $(TESTS_DIR)/%,$(TESTS_C))
 TESTS_CFLAGS+= \
 	-std=c11 \
 	-Wall \
 
 # Decoder from the OpenCSD test examples
 DECODER := trc_pkt_lister
+DECODED_TRACE := $(DIR)/trace.opencsd
+LATEST := trace/latest.opencsd
 
 LIB_DIR:=lib
 LIBSTMPRELOAD:=$(LIB_DIR)/libstm_preload.so
@@ -112,7 +115,9 @@ trace: $(CS_TRACE) $(TESTS) disable_aslr
 	mkdir -p $(DIR) && \
 	cd $(DIR) && \
 	sudo $(realpath $(CS_TRACE)) $(CS_TRACE_FLAGS) -- $(realpath $(TRACEE)) $(TRACEE_ARGS)
-	$(realpath $(DECODER)) -ss_dir $(DIR) -logfile -logfilename $(DIR)/trace.opencsd
+	$(realpath $(DECODER)) -ss_dir $(DIR) -logfile -logfilename $(DECODED_TRACE)
+	rm -f $(LATEST)
+	ln $(DECODED_TRACE) $(LATEST)
 
 debug: $(CS_TRACE) $(TESTS) disable_aslr
 	mkdir -p $(DIR) && \
@@ -130,7 +135,7 @@ $(LIBSTMPRELOAD): src/stm_preload.c
 	mkdir -p lib
 	$(CC) -fPIC -shared $^ -o $@ -g -ffixed-x28
 
-tests/%: tests/%.c $(LIBSTMPRELOAD)
+$(TESTS_DIR)/%: $(TESTS_DIR)/%.c $(LIBSTMPRELOAD)
 	$(CUSTOM_CC) $(TESTS_CFLAGS) -o $@ $<
 
 format:
