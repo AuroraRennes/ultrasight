@@ -99,6 +99,8 @@ TESTS:=$(patsubst $(TESTS_DIR)/%.c, $(TESTS_DIR)/%,$(TESTS_C))
 TESTS_CFLAGS+= \
 	-std=c11 \
 	-Wall \
+	-O0 \
+	-g
 
 # Decoder from the OpenCSD test examples
 DECODER := trc_pkt_lister
@@ -133,7 +135,7 @@ $(LIBCSACCUTIL): libcsal
 
 $(LIBSTMPRELOAD): src/stm_preload.c
 	mkdir -p lib
-	$(CC) -fPIC -shared $^ -o $@ -g -ffixed-x28
+	$(CC) -fPIC -shared $^ -o $@ -g -ffixed-x26
 
 $(TESTS_DIR)/%: $(TESTS_DIR)/%.c $(LIBSTMPRELOAD)
 	$(CUSTOM_CC) $(TESTS_CFLAGS) -o $@ $<
