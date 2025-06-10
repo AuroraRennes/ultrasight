@@ -90,6 +90,7 @@ endif
 DATE:=$(shell date +%Y-%m-%d-%H-%M-%S)
 DIR?=trace/$(DATE)
 TRACEE?=$(TESTS_DIR)/fib
+TRACEE_ENVS?=
 TRACEE_ARGS?=
 
 # test flags and compilation instructions
@@ -116,7 +117,8 @@ $(CS_TRACE): $(CS_TRACE_OBJS) $(LIBCSACCESS) $(LIBCSACCUTIL)
 trace: $(CS_TRACE) $(TESTS) disable_aslr
 	mkdir -p $(DIR) && \
 	cd $(DIR) && \
-	sudo $(realpath $(CS_TRACE)) $(CS_TRACE_FLAGS) -- $(realpath $(TRACEE)) $(TRACEE_ARGS)
+	sudo $(realpath $(CS_TRACE)) $(CS_TRACE_FLAGS) -- $(TRACEE_ENVS) $(realpath $(TRACEE)) $(TRACEE_ARGS)
+	cp $(realpath $(TRACEE)) $(DIR)
 	$(realpath $(DECODER)) -ss_dir $(DIR) -logfile -logfilename $(DECODED_TRACE)
 	rm -f $(LATEST)
 	ln $(DECODED_TRACE) $(LATEST)
