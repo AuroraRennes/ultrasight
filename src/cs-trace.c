@@ -59,7 +59,7 @@ void child(char *argv[])
   }
 
   /* Redefine LD_PRELOAD to map/unmap the stm region in the process */
-  setenv("LD_PRELOAD", "/home/aurora/qtests/ultrasight/lib/libstm_preload.so",
+  setenv("LD_PRELOAD", "/home/aurora/qtests/coresight/ultrasight/lib/libstm_preload.so",
          1);
   /* execute the traced program, passed as arguments after -- in the main CLI */
   execvpe(argv[0], argv, environ);
