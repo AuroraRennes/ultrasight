@@ -92,11 +92,13 @@ DIR?=trace/$(DATE)
 TRACEE?=$(TESTS_DIR)/fib
 TRACEE_ENVS?=
 TRACEE_ARGS?=
+TRACEE_DUMP?=$(TRACEE).dump
 
 # test flags and compilation instructions
 TESTS_DIR:= tests
 TESTS_C:=$(wildcard $(TESTS_DIR)/*.c)
 TESTS:=$(patsubst $(TESTS_DIR)/%.c, $(TESTS_DIR)/%,$(TESTS_C))
+TESTS_DUMPS:=$(patsubst $(TESTS_DIR)/%.c, $(TESTS_DIR)/%.dump,$(TESTS_C))
 TESTS_CFLAGS+= \
 	-std=c11 \
 	-Wall \
@@ -114,16 +116,17 @@ LIBSTMPRELOAD:=$(LIB_DIR)/libstm_preload.so
 $(CS_TRACE): $(CS_TRACE_OBJS) $(LIBCSACCESS) $(LIBCSACCUTIL)
 	$(CC) -o $@ $^ $(CFLAGS)
 
-trace: $(CS_TRACE) $(TESTS) disable_aslr
+trace: $(CS_TRACE) $(TESTS_DUMPS) disable_aslr
 	mkdir -p $(DIR) && \
 	cd $(DIR) && \
 	sudo $(realpath $(CS_TRACE)) $(CS_TRACE_FLAGS) -- $(TRACEE_ENVS) $(realpath $(TRACEE)) $(TRACEE_ARGS)
 	cp $(realpath $(TRACEE)) $(DIR)
+	cp $(realpath $(TRACEE_DUMP)) $(DIR)
 	$(realpath $(DECODER)) -ss_dir $(DIR) -logfile -logfilename $(DECODED_TRACE)
 	rm -f $(LATEST)
 	ln $(DECODED_TRACE) $(LATEST)
 
-debug: $(CS_TRACE) $(TESTS) disable_aslr
+debug: $(CS_TRACE) $(TESTS_DUMPS) disable_aslr
 	mkdir -p $(DIR) && \
 	cd $(DIR) && \
 	sudo gdb --args $(realpath $(CS_TRACE)) $(CS_TRACE_FLAGS) -- $(realpath $(TRACEE)) $(TRACEE_ARGS)
@@ -141,6 +144,9 @@ $(LIBSTMPRELOAD): src/stm_preload.c
 
 $(TESTS_DIR)/%: $(TESTS_DIR)/%.c $(LIBSTMPRELOAD)
 	$(CUSTOM_CC) $(TESTS_CFLAGS) -o $@ $<
+
+$(TESTS_DIR)/%.dump: $(TESTS_DIR)/%
+	objdump -d $< > $@
 
 format:
 	clang-format -i $(INC)/*.h src/*.c
