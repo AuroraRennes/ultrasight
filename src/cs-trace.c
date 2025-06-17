@@ -73,6 +73,7 @@ void child(char *argv[])
 void parent(pid_t pid, int *child_status)
 {
   int wstatus;
+  struct timespec start_time, end_time;
   /** Wait for the child process to stop, specified by the pid.
    *  The status of the child process is stored in wstatus.
    */
@@ -87,6 +88,8 @@ void parent(pid_t pid, int *child_status)
     start_trace(pid, true);
     /* Send a continue ptrace request to the child pid */
     printf("Sending CONT signal to child\n");
+    /* Capture the start timestamp */
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
     ptrace(PTRACE_CONT, pid, NULL, NULL);
   }
 
@@ -98,7 +101,14 @@ void parent(pid_t pid, int *child_status)
      * function triggers the callback function.
      */
     if (WIFEXITED(wstatus)) {
+      /* Capture the end time */
+      clock_gettime(CLOCK_MONOTONIC, &end_time);
       printf("Child exited with status %d, stopping trace\n", wstatus);
+      /* Print elapsed time */
+      double elapsed = (end_time.tv_sec - start_time.tv_sec) +
+                 (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
+      printf("Child execution time (traced): %.6f seconds\n", elapsed);
+
       stop_trace(true);
       printf("Finalizing trace\n");
       fini_trace();

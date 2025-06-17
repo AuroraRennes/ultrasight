@@ -116,7 +116,7 @@ LIBSTMPRELOAD:=$(LIB_DIR)/libstm_preload.so
 $(CS_TRACE): $(CS_TRACE_OBJS) $(LIBCSACCESS) $(LIBCSACCUTIL)
 	$(CC) -o $@ $^ $(CFLAGS)
 
-trace: $(CS_TRACE) $(TESTS_DUMPS) disable_aslr
+trace: $(CS_TRACE) $(TESTS) $(TESTS_DUMPS) disable_aslr
 	mkdir -p $(DIR) && \
 	cd $(DIR) && \
 	sudo $(realpath $(CS_TRACE)) $(CS_TRACE_FLAGS) -- $(TRACEE_ENVS) $(realpath $(TRACEE)) $(TRACEE_ARGS)
