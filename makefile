@@ -121,7 +121,7 @@ trace: $(CS_TRACE) $(TESTS) $(TESTS_DUMPS) disable_aslr
 	cd $(DIR) && \
 	sudo $(realpath $(CS_TRACE)) $(CS_TRACE_FLAGS) -- $(TRACEE_ENVS) $(realpath $(TRACEE)) $(TRACEE_ARGS)
 	cp $(realpath $(TRACEE)) $(DIR)
-	cp $(realpath $(TRACEE_DUMP)) $(DIR)
+	objdump -d $(realpath $(TRACEE)) > $(DIR)/$(notdir $(basename $(TRACEE))).dump
 	$(realpath $(DECODER)) -ss_dir $(DIR) -logfile -logfilename $(DECODED_TRACE)
 	rm -f $(LATEST)
 	ln $(DECODED_TRACE) $(LATEST)
@@ -144,9 +144,6 @@ $(LIBSTMPRELOAD): src/stm_preload.c
 
 $(TESTS_DIR)/%: $(TESTS_DIR)/%.c $(LIBSTMPRELOAD)
 	$(CUSTOM_CC) $(TESTS_CFLAGS) -o $@ $<
-
-$(TESTS_DIR)/%.dump: $(TESTS_DIR)/%
-	objdump -d $< > $@
 
 format:
 	clang-format -i $(INC)/*.h src/*.c
