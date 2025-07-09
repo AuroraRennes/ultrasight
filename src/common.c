@@ -186,8 +186,8 @@ static int alloc_trace_buf(void)
 {
   trace_buf = mmap(NULL, DEFAULT_TRACE_SIZE, PROT_READ | PROT_WRITE,
                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (!trace_buf) {
-    fprintf(stderr, "mmap failed when allocating trace buffer");
+  if (trace_buf == MAP_FAILED) {
+    fprintf(stderr, "[!] mmap failed when allocating trace buffer\n");
     return -1;
   }
   /* FIXME: Do not initialize global variables in the function */
@@ -428,13 +428,13 @@ int fetch_trace(void)
   buf_remain =
       trace_buf_size - (size_t)((char *)trace_buf_ptr - (char *)trace_buf);
   /* If there is no space left, buffer size is doubled and remapped */
-  if ((size_t)len > buf_remain) {
+  while ((size_t)len > buf_remain) {
     new_trace_buf_size = trace_buf_size * 2;
-    new_trace_buf = mremap(trace_buf, trace_buf_size, new_trace_buf_size, 0);
+    new_trace_buf = mremap(trace_buf, trace_buf_size, new_trace_buf_size, MREMAP_MAYMOVE);
 
     /* Check for a remap error */
-    if (!new_trace_buf) {
-      fprintf(stderr, "mremap call failed when resizing trace buffer");
+    if (new_trace_buf == (void *) -1) {
+      fprintf(stderr, "[!] mremap call failed when resizing trace buffer\n");
       goto exit;
     }
     /* Adjust new trace buffer pointers and values */
@@ -442,15 +442,15 @@ int fetch_trace(void)
                              ((char *)trace_buf_ptr - (char *)trace_buf));
     trace_buf = new_trace_buf;
     trace_buf_size = new_trace_buf_size;
-    buf_remain = (size_t)((char *)trace_buf_ptr - (char *)trace_buf);
+    buf_remain = trace_buf_size - ((char *)trace_buf_ptr - (char *)trace_buf);
   }
 
   /* Get the trace data */
   n = cs_get_trace_data(etb, trace_buf_ptr, buf_remain);
   if (n <= 0) {
-    fprintf(stderr, "Failed to get trace\n");
+    fprintf(stderr, "[!] Failed to get trace\n");
   } else if (n < len) {
-    fprintf(stderr, "Got incomplete trace\n");
+    fprintf(stderr, "[!] Got incomplete trace\n");
   }
   /* Empty the trace buffer, resetting read and write pointers */
   cs_empty_trace_buffer(etb);
