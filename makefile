@@ -43,7 +43,7 @@ else
 endif
 CSAL_INC:=$(CSAL_BASE)/include
 CSAL_LIB:=$(CSAL_BASE)/lib/$(CSAL_ARCH)/$(CSAL_BUILD)
-CSAL_MAKE_FLAGS:=ARCH=$(CSAL_ARCH) NO_CHECK=1 NO_DIAG=1
+CSAL_MAKE_FLAGS:=ARCH=$(CSAL_ARCH) DIAG=1 CHECK=1
 LIBCSACCESS:=$(CSAL_LIB)/libcsaccess.a
 LIBCSACCUTIL:=$(CSAL_LIB)/libcsacc_util.a
 
@@ -71,7 +71,7 @@ CFLAGS:= \
 	-lpthread \
 
 ifneq ($(strip $(DEBUG)),)
-	CFLAGS+=-O0
+	CFLAGS+=-O0 -g
 else
 	CFLAGS+=-Ofast
 endif
@@ -163,7 +163,12 @@ clean:
 clean-trace:
 	rm -rf trace
 
-dist-clean:
+clean-dist:
 	$(MAKE) -C $(CSAL_BASE) clean $(CSAL_MAKE_FLAGS)
+
+clean-test:
+	rm -f $(TESTS)
+
+clean-all: clean clean-trace clean-dist
 
 .PHONY: format libcsal clean trace
