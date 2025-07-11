@@ -55,12 +55,22 @@ void child(char *argv[])
   /* ptrace request from the tracee (this process) to process 0 */
   ret = ptrace(PTRACE_TRACEME, 0, NULL, NULL);
   if (ret < 0) {
-    perror("ptrace");
+    perror("[!] Ptrace request traceme failed");
+    exit(1);
   }
 
   /* Redefine LD_PRELOAD to map/unmap the stm region in the process */
   setenv("LD_PRELOAD", "/home/aurora/qtests/coresight/ultrasight/lib/libstm_preload.so",
          1);
+  /* Check file existence and executability */
+  if (access(argv[0], F_OK) != 0) {
+    perror("[!] Tracee program not found");
+    exit(1);
+  }
+  if (access(argv[0], X_OK) != 0) {
+    perror("[!] Tracee program not executable");
+    exit(1);
+  }
   /* execute the traced program, passed as arguments after -- in the main CLI */
   execvpe(argv[0], argv, environ);
 }
@@ -81,13 +91,13 @@ void parent(pid_t pid, int *child_status)
   /* If the child process has stopped due to a vfork() event */
   if (WIFSTOPPED(wstatus) && WSTOPSIG(wstatus) == PTRACE_EVENT_VFORK_DONE) {
     /* Initialize the trace */
-    printf("Initializing trace\n");
+    printf("[+] Initializing trace\n");
     init_trace(getpid(), pid);
     /* Start the trace */
-    printf("Starting trace\n");
+    printf("[+] Starting trace\n");
     start_trace(pid, true);
     /* Send a continue ptrace request to the child pid */
-    printf("Sending CONT signal to child\n");
+    printf("[+] Sending CONT signal to child\n");
     /* Capture the start timestamp */
     clock_gettime(CLOCK_MONOTONIC, &start_time);
     ptrace(PTRACE_CONT, pid, NULL, NULL);
@@ -103,17 +113,29 @@ void parent(pid_t pid, int *child_status)
     if (WIFEXITED(wstatus)) {
       /* Capture the end time */
       clock_gettime(CLOCK_MONOTONIC, &end_time);
-      printf("Child exited with status %d, stopping trace\n", wstatus);
-      /* Print elapsed time */
-      double elapsed = (end_time.tv_sec - start_time.tv_sec) +
-                 (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
-      printf("Child execution time (traced): %.6f seconds\n", elapsed);
+      if (wstatus == 0) {
+        printf("[+] Child exited with status %d, stopping trace\n", wstatus);
+        /* Print elapsed time */
+        double elapsed = (end_time.tv_sec - start_time.tv_sec) +
+                  (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
+        printf("[+] Child execution time (traced): %.6f seconds\n", elapsed);
 
-      stop_trace(true);
-      printf("Finalizing trace\n");
-      fini_trace();
-      printf("Done!\n");
-      break;
+        stop_trace(true);
+        printf("[+] Finalizing trace\n");
+        fini_trace();
+        printf("[+] Done!\n");
+        break;
+      } else if (WIFSTOPPED(wstatus) && WSTOPSIG(wstatus) == SIGSTOP) {
+        trace_suspend_resume_callback();
+      } else {
+        printf("[~] Child exited with status %d, stopping trace\n", wstatus);
+        stop_trace(true);
+        printf("[~] Finalizing trace\n");
+        fini_trace();
+        printf("[~] Done!\n");
+        break;
+      }
+
     } else if (WIFSTOPPED(wstatus) && WSTOPSIG(wstatus) == SIGSTOP) {
       trace_suspend_resume_callback();
     }

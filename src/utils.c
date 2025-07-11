@@ -517,7 +517,7 @@ int setup_map_info(pid_t pid, struct map_info *map_info, int info_count_max)
     }
     /* Too many map_info */
     if (count >= info_count_max) {
-      fprintf(stderr, "INFO: [0x%lx-0x%lx] will not be traced\n", start, end);
+      fprintf(stderr, "[~] [0x%lx-0x%lx] will not be traced\n", start, end);
       continue;
     }
     /* Search absolute path, excluding anonymous mappings */

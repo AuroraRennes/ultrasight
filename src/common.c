@@ -22,6 +22,7 @@
 #include <unistd.h>
 #include <limits.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <time.h>
 
 #include <sys/ptrace.h>
@@ -97,6 +98,11 @@ static bool is_first_trace = true;
 static void *trace_buf = NULL;
 static size_t trace_buf_size = 0;
 static void *trace_buf_ptr = NULL;
+
+static pthread_t fetcher_thread;
+static pthread_mutex_t trace_fetcher_mutex;
+static pthread_cond_t trace_fetcher_cond;
+static bool fetcher_ready = true;
 
 static pthread_mutex_t trace_mutex;
 static pthread_mutex_t trace_state_mutex;
@@ -178,6 +184,156 @@ static void set_trace_state(trace_state_t new_state)
   }
   pthread_mutex_unlock(&trace_state_mutex);
 }
+
+/**
+ * Set the state of the trace to suspended
+ */
+void trace_suspend_resume_callback(void) { set_trace_state(suspended_state); }
+
+/**
+ * Polling for the trace sink, fetching it if needed
+ */
+static int trace_sink_polling(unsigned long fetch_threshold) {
+  int ret;
+  unsigned long curr_offset;
+  unsigned long init_pos;
+
+  /* Initial position read from the base address of the buffer */
+  init_pos = cs_get_buffer_rwp(devices.etb);
+
+  while (!kill(child_pid, 0)) {
+
+    /* Current read write position, extracted from the device register */
+    curr_offset = cs_get_buffer_rwp(devices.etb) - init_pos;
+
+    // printf("[+] - Fetcher: Waiting for threshold\n");
+    printf("[~] INITPOS: 0x%lx\n", init_pos);
+    printf("[~] CURROFF: 0x%lx\n", curr_offset);
+    if (curr_offset > fetch_threshold) {
+
+      printf("[+] - Fetcher: threshold reached, stopping child\n");
+      /* Suspend the child process */
+      ret = kill(child_pid, SIGSTOP);
+      if (ret < 0) {
+        if (errno == ESRCH) {
+          /* Child killed */
+          goto killed;
+        }
+        perror("kill(SIGSTOP)");
+        break;
+      }
+
+      /* Wait for a suspending trace */
+      wait_trace_event(suspend_event);
+
+      /* Disable the trace before fetching */
+      printf("[+] - Fetcher: disabling trace collection\n");
+      if ((ret = disable_cs_trace(false) < 0)) {
+        fprintf(stderr, "disable_cs_trace() failed\n");
+        goto exit;
+      }
+
+      /* Fetch the trace from the buffer in memory */
+      printf("[+] - Fetcher: fetching trace data\n");
+      ret = fetch_trace();
+      if (ret < 0) {
+          fprintf(stderr, "[!] fetch_trace() failed\n");
+          goto exit;
+      }
+
+      printf("[+] - Fetcher: relaunching trace collection\n");
+      ret = enable_cs_trace(child_pid);
+      if (ret < 0) {
+        fprintf(stderr, "enable_cs_trace() failed\n");
+        goto exit;
+      }
+
+      /* Send a continue to the child */
+      printf("[+] - Fetcher: resuming child\n");
+      ret = kill(child_pid, SIGCONT);
+      if (ret < 0) {
+        if (errno == ESRCH) {
+          goto killed;
+        }
+        perror("kill(SIGCONT)");
+        break;
+      }
+
+      // Reset init_pos to current buffer position after fetch
+      init_pos = cs_get_buffer_rwp(devices.etb);
+    }
+    // struct timespec req = {0, 100000000}; // 100 ms
+    // nanosleep(&req, NULL);
+    sleep(10);
+  }
+
+killed:
+  pthread_mutex_lock(&trace_event_mutex);
+  printf("[+] - Fetcher: Child killed, waiting before last fetch\n");
+  while (trace_event != stop_event && trace_event != fini_event) {
+    pthread_cond_wait(&trace_event_cond, &trace_event_mutex);
+  }
+  pthread_mutex_unlock(&trace_event_mutex);
+
+  printf("[+] - Fetcher: Last fetch\n");
+  ret = fetch_trace();
+  if (ret < 0) {
+      fprintf(stderr, "[!] fetch_trace() failed\n");
+      goto exit;
+  }
+
+exit:
+  pthread_mutex_lock(&trace_fetcher_mutex);
+  fetcher_ready = true;
+  pthread_cond_broadcast(&trace_fetcher_cond);
+  pthread_mutex_unlock(&trace_fetcher_mutex);
+
+  return ret;
+}
+
+/**
+ * Fetcher worker function, waiting for
+ */
+static void *fetcher_worker(void *arg)
+{
+  trace_event_t event;
+  size_t etf_ram_size;
+  unsigned long fetch_threshold;
+  int ret;
+
+  if (etr_ram_size == 0) {
+    etr_ram_size = cs_get_buffer_size_bytes(devices.etb);
+  }
+  if (devices.trace_sinks[0]) {
+    etf_ram_size = (size_t)cs_get_buffer_size_bytes(devices.trace_sinks[0]);
+    fetch_threshold = (etf_ram_size < etr_ram_size) ? etf_ram_size * 2 : etr_ram_size;
+  } else {
+    fetch_threshold = etr_ram_size;
+  }
+
+  printf("[~] THRESH: 0x%lx\n", fetch_threshold);
+  fetch_threshold = 0x40000;
+
+  while (1) {
+    pthread_mutex_lock(&trace_event_mutex);
+    while (trace_event != start_event && trace_event != fini_event) {
+      pthread_cond_wait(&trace_event_cond, &trace_event_mutex);
+    }
+    event = trace_event;
+    pthread_mutex_unlock(&trace_event_mutex);
+
+    if (event == start_event) {
+      trace_sink_polling(fetch_threshold);
+    } else if (event == fini_event) {
+      break;
+    }
+  }
+
+  return NULL;
+}
+
+
+
 
 /**
  * Allocate the trace buffer through mmap
@@ -264,19 +420,20 @@ static int enable_cs_trace(pid_t pid)
   if (is_first_trace) {
     /* Do not specify traced PID in forkserver mode */
     if (configure_trace(board, &devices, map_info, range_count, pid) < 0) {
-      fprintf(stderr, "configure_trace() failed\n");
+      fprintf(stderr, "[!] configure_trace() failed\n");
       goto exit;
     }
     /* Enable ETMs and trace sinks for the first time */
     if (enable_trace(board, &devices) < 0) {
-      fprintf(stderr, "enable_trace() failed\n");
+      fprintf(stderr, "[!] enable_trace() failed\n");
       goto exit;
     }
     is_first_trace = false;
   } else {
     /* Enable trace sinks only once the ETMs enabled */
-    if (enable_trace_sinks_only(&devices) < 0) {
-      fprintf(stderr, "enable_trace_sinks_only() failed\n");
+    printf("[+] Enabling sinks only\n");
+    if (enable_trace_sinks_only(board, &devices) < 0) {
+      fprintf(stderr, "[!] enable_trace_sinks_only() failed\n");
       goto exit;
     }
   }
@@ -315,13 +472,15 @@ static int disable_cs_trace(bool disable_all)
   while (disable_trial++ < TRACE_DISABLE_TRIAL) {
     if (disable_all) {
       if ((ret = disable_trace(board, &devices)) < 0) {
-        fprintf(stderr, "disable_trace() failed\n");
+        fprintf(stderr, "[!] Try %d: disable_trace() failed\n", disable_trial);
       }
     } else {
+      printf("[+] Disabling sinks only\n");
       if ((ret = disable_trace_sinks_only(&devices)) < 0) {
-        fprintf(stderr, "disable_trace_sinks_only() failed\n");
+        fprintf(stderr, "[!] Try %d disable_trace_sinks_only() failed\n", disable_trial);
       }
-    }
+
+    printf("[~] disable: return error %d\n", ret);}
 
     /* If there is no error, break out of the trial loop */
     if (!(ret < 0)) {
@@ -464,10 +623,7 @@ exit:
   return ret;
 }
 
-/**
- * Set the state of the trace to suspended
- */
-void trace_suspend_resume_callback(void) { set_trace_state(suspended_state); }
+
 
 /**
  * Start a trace session. CoreSight and decoder must be initialized.
@@ -477,7 +633,7 @@ int start_trace(pid_t pid, bool use_pid_trace)
   int ret;
   /* Set the cpu affinity, binding the process to the corresponding cpu */
   if ((ret = set_cpu_affinity(trace_cpu, pid)) < 0) {
-    fprintf(stderr, "set_cpu_affinity() failed\n");
+    fprintf(stderr, "[!] set_cpu_affinity() failed\n");
     goto exit;
   }
 
@@ -487,7 +643,7 @@ int start_trace(pid_t pid, bool use_pid_trace)
   /* Enable the CoreSight trace */
   child_pid = pid;
   if ((ret = enable_cs_trace(use_pid_trace ? pid : 0)) < 0) {
-    fprintf(stderr, "enable_cs_trace() failed\n");
+    fprintf(stderr, "[!] enable_cs_trace() failed\n");
     goto exit;
   }
 
@@ -518,7 +674,7 @@ int stop_trace(bool disable_all)
 
   /* Disable all components */
   if ((ret = disable_cs_trace(disable_all)) < 0) {
-    fprintf(stderr, "disable_cs_trace() failed\n");
+    fprintf(stderr, "[!] Could not disable trace\n");
     goto exit;
   }
 
@@ -545,14 +701,17 @@ int init_trace(pid_t parent_pid, pid_t pid)
   pthread_mutex_init(&trace_event_mutex, NULL);
   pthread_cond_init(&trace_event_cond, NULL);
 
+  pthread_mutex_init(&trace_fetcher_mutex, NULL);
+  pthread_cond_init(&trace_fetcher_cond, NULL);
+
   /* If the trace cpu is not set, tries to link the parent pid to its preferred
    * CPU (if there is no, use the first one)*/
   if (trace_cpu < 0) {
     if ((preferred_cpu = get_preferred_cpu(parent_pid)) < 0) {
-      fprintf(stderr, "INFO: Failed to get preferred CPU\n");
+      fprintf(stderr, "[~] Failed to get preferred CPU\n");
       /* Some boards is not supported by get_preferred_cpu() */
       if ((preferred_cpu = find_free_cpu() < 0)) {
-        fprintf(stderr, "WARNING: Failed to find free CPU. Use #%d\n",
+        fprintf(stderr, "[~] Failed to find free CPU. Use #%d\n",
                 DEFAULT_TRACE_CPU);
       }
     }
@@ -562,19 +721,19 @@ int init_trace(pid_t parent_pid, pid_t pid)
   /* Get udmabuf information (address and size), storing them in their
    * respective variables */
   if (get_udmabuf_info(udmabuf_num, &etr_ram_addr, &etr_ram_size) < 0) {
-    fprintf(stderr, "Failed to get u-dma-buf info\n");
+    fprintf(stderr, "[!] Failed to get u-dma-buf info\n");
     goto exit;
   }
 
   /* Extract and store memory mapping information */
   if ((range_count = setup_map_info(pid, map_info, RANGE_MAX)) < 0) {
-    fprintf(stderr, "setup_map_info() failed\n");
+    fprintf(stderr, "[!] setup_map_info() failed\n");
     goto exit;
   }
 
   /* Setup board variables for a given board defined in known_board.h */
   if (setup_named_board(board_name, &board, &devices, known_boards) < 0) {
-    fprintf(stderr, "setup_named_board() failed\n");
+    fprintf(stderr, "[!] setup_named_board() failed\n");
     goto exit;
   }
 
@@ -590,6 +749,13 @@ int init_trace(pid_t parent_pid, pid_t pid)
     goto exit;
   }
 #endif
+
+  ret = pthread_create(&fetcher_thread, NULL, fetcher_worker, NULL);
+  if (ret != 0) {
+    fprintf(stderr, "[!] pthread_create() failed for the Fetcher: %d\n", ret);
+    goto exit;
+  }
+  printf("[+] fetcher thread created\n");
 
   /* Get the trace ID */
   if ((trace_id = get_trace_id(trace_cpu)) < 0) {
@@ -615,7 +781,8 @@ exit:
 void fini_trace(void)
 {
   /* Fetch the trace in the buffer */
-  fetch_trace();
+  set_trace_state(fini_state);
+  pthread_join(fetcher_thread, NULL);
 
   /* Export the trace to a file */
   export_trace(DEFAULT_TRACE_NAME);
@@ -638,6 +805,10 @@ void fini_trace(void)
 
   /* Cleanup the STM region */
   clean_stm_region(&fd, map_base);
+
+  /* Clean up fetcher */
+  pthread_cond_destroy(&trace_fetcher_cond);
+  pthread_mutex_destroy(&trace_fetcher_mutex);
 
   /* Destroy mutexes and conditional variables */
   pthread_cond_destroy(&trace_event_cond);
