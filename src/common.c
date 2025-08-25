@@ -156,6 +156,7 @@ static void set_trace_state(trace_state_t new_state)
   pthread_mutex_lock(&trace_state_mutex);
   old_state = trace_state;
   trace_state = new_state;
+  printf("[+] Trace state transition: %d -> %d\n", old_state, new_state);
   /** Follow the following finite state machine
    *      From       |       To        |  Signals
    * ----------------|-----------------|---------------
@@ -188,7 +189,9 @@ static void set_trace_state(trace_state_t new_state)
 /**
  * Set the state of the trace to suspended
  */
-void trace_suspend_resume_callback(void) { set_trace_state(suspended_state); }
+void trace_suspend_callback(void) { set_trace_state(suspended_state); }
+
+void trace_resume_callback(void) { set_trace_state(running_state); }
 
 /**
  * Polling for the trace sink, fetching it if needed
@@ -207,8 +210,8 @@ static int trace_sink_polling(unsigned long fetch_threshold) {
     curr_offset = cs_get_buffer_rwp(devices.etb) - init_pos;
 
     // printf("[+] - Fetcher: Waiting for threshold\n");
-    printf("[~] INITPOS: 0x%lx\n", init_pos);
-    printf("[~] CURROFF: 0x%lx\n", curr_offset);
+    // printf("[~] INITPOS: 0x%lx\n", init_pos);
+    // printf("[~] CURROFF: 0x%lx\n", curr_offset);
     if (curr_offset > fetch_threshold) {
 
       printf("[+] - Fetcher: threshold reached, stopping child\n");
@@ -256,15 +259,19 @@ static int trace_sink_polling(unsigned long fetch_threshold) {
           goto killed;
         }
         perror("kill(SIGCONT)");
-        break;
+        goto exit;
       }
+
+      /* Wait for a suspending trace */
+      printf("[+] - Fetcher: Waiting for resume event\n");
+      wait_trace_event(resume_event);
 
       // Reset init_pos to current buffer position after fetch
       init_pos = cs_get_buffer_rwp(devices.etb);
     }
-    // struct timespec req = {0, 100000000}; // 100 ms
-    // nanosleep(&req, NULL);
-    sleep(10);
+    struct timespec req = {0, 100000000}; // 100 ms
+    nanosleep(&req, NULL);
+    // sleep(10);
   }
 
 killed:
