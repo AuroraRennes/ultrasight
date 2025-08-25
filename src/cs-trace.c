@@ -105,7 +105,7 @@ void parent(pid_t pid, int *child_status)
 
   while (1) {
     /* Wait for the child process to stop */
-    waitpid(pid, &wstatus, 0);
+    waitpid(pid, &wstatus, WUNTRACED | WCONTINUED);
     /** If the child process exited normally, stop and finalize the trace before
      * breaking from the loop else, if it was stopped using SIGSTOP, the
      * function triggers the callback function.
@@ -125,19 +125,15 @@ void parent(pid_t pid, int *child_status)
         fini_trace();
         printf("[+] Done!\n");
         break;
-      } else if (WIFSTOPPED(wstatus) && WSTOPSIG(wstatus) == SIGSTOP) {
-        trace_suspend_resume_callback();
-      } else {
-        printf("[~] Child exited with status %d, stopping trace\n", wstatus);
-        stop_trace(true);
-        printf("[~] Finalizing trace\n");
-        fini_trace();
-        printf("[~] Done!\n");
-        break;
       }
-
+    } else if (WIFCONTINUED(wstatus)) {
+      printf("Trying to resume child\n");
+      trace_resume_callback();
+      ptrace(PTRACE_CONT, pid, NULL, SIGCONT);
     } else if (WIFSTOPPED(wstatus) && WSTOPSIG(wstatus) == SIGSTOP) {
-      trace_suspend_resume_callback();
+      printf("HENLO stop\n");
+      ptrace(PTRACE_CONT, pid, NULL, SIGSTOP);
+      trace_suspend_callback();
     }
   }
 
