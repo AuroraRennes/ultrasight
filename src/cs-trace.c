@@ -40,6 +40,7 @@
 extern int registration_verbose;
 extern char *board_name;
 extern bool export_config;
+extern bool fetcher_on;
 extern int udmabuf_num;
 extern int trace_cpu;
 extern unsigned char *trace_bitmap;
@@ -158,6 +159,8 @@ static void usage(char *argv0)
           trace_cpu);
   fprintf(stderr, "  -e, --export\t\tenable config export (default: %d)\n",
           export_config);
+  fprintf(stderr, "  -f, --fetcher\t\tenable fetcher worker (default: %d)\n",
+          fetcher_on);
   fprintf(stderr,
           "  -u, --udmabuf=INT\t\tspecify u-dma-buf device number to use "
           "(default: %d)",
@@ -178,6 +181,7 @@ int main(int argc, char *argv[])
       {"board", required_argument, NULL, 'b'},
       {"cpu", required_argument, NULL, 'c'},
       {"export", no_argument, NULL, 'e'},
+      {"fetcher", no_argument, NULL, 'f'},
       {"udmabuf", required_argument, NULL, 'u'},
       {"verbose", optional_argument, NULL, 'v'},
       {"help", no_argument, NULL, 'h'},
@@ -199,7 +203,7 @@ int main(int argc, char *argv[])
     exit(EXIT_SUCCESS);
   }
   /* Parse CLI elements */
-  while ((opt = getopt_long(argc, argv, "b:c:e:v::h", long_options,
+  while ((opt = getopt_long(argc, argv, "b:c:e:f:v::h", long_options,
                             &option_index)) != -1) {
     switch (opt) {
       /* Board name */
@@ -213,6 +217,9 @@ int main(int argc, char *argv[])
       /* Export to snapshot format */
       case 'e':
         export_config = true;
+        break;
+      case 'f':
+        fetcher_on = true;
         break;
       /* udmabuf number */
       case 'u':

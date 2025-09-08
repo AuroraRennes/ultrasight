@@ -76,9 +76,11 @@ char *board_name = "ZCU-104";
 const struct board *board;
 struct cs_devices_t devices;
 
+/* Arguments */
 int udmabuf_num = DEFAULT_UDMABUF_NUM;
 int trace_cpu = -1;
 bool export_config = false;
+bool fetcher_on = false;
 unsigned long etr_ram_addr = 0;
 size_t etr_ram_size = 0;
 int range_count = 0;
@@ -757,12 +759,14 @@ int init_trace(pid_t parent_pid, pid_t pid)
   }
 #endif
 
-  ret = pthread_create(&fetcher_thread, NULL, fetcher_worker, NULL);
+  if (fetcher_on){
+    ret = pthread_create(&fetcher_thread, NULL, fetcher_worker, NULL);
   if (ret != 0) {
     fprintf(stderr, "[!] pthread_create() failed for the Fetcher: %d\n", ret);
     goto exit;
   }
   printf("[+] fetcher thread created\n");
+  }
 
   /* Get the trace ID */
   if ((trace_id = get_trace_id(trace_cpu)) < 0) {
@@ -787,9 +791,13 @@ exit:
  */
 void fini_trace(void)
 {
-  /* Fetch the trace in the buffer */
-  set_trace_state(fini_state);
-  pthread_join(fetcher_thread, NULL);
+  if (fetcher_on) {
+    /* Fetch the trace in the buffer */
+    set_trace_state(fini_state);
+    pthread_join(fetcher_thread, NULL);
+  } else {
+    fetch_trace();
+  }
 
   /* Export the trace to a file */
   export_trace(DEFAULT_TRACE_NAME);
