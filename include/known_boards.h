@@ -96,8 +96,8 @@ static int do_registration_zcu104(struct cs_devices_t *devices)
   cs_atb_register(rep, 1, tpiu, 0);
 
   /* Sink configuration */
-  devices->etb =
-      etr; /* Main buffer (i.e. where the trace is stored in the end) */
+  devices->etb = etr; /* Main buffer (i.e. where the trace is stored in the end) */
+  devices->tpiu = tpiu; /* Sent to PL through EMIO */
   devices->trace_sinks[0] = etf1; /* FIFO as sinks */
   devices->trace_sinks[1] = etf2; /* FIFO as sinks */
   devices->num_trace_sinks = 2;
