@@ -45,11 +45,11 @@ void cs_etb_flush_and_wait_stop(struct cs_devices_t *devices)
     if (cs_device_wait(devices->etb, CS_ETB_STATUS, CS_ETB_STATUS_FtEmpty,
                        CS_REG_WAITBITS_ALL_1, 0, &status_val) != 0) {
       fprintf(stderr,
-              "ETB collection not stopped on flush on trigger. STS: 0x%08x\n",
+              "[!] ETB collection not stopped on flush on trigger. STS: 0x%08x\n",
               status_val);
     }
   } else {
-    fprintf(stderr, "ETB is not activated, flush cancelled.\n");
+    fprintf(stderr, "[!] ETB is not activated, flush cancelled.\n");
   }
 }
 
@@ -69,7 +69,7 @@ static void set_etmv4_addr_range(struct map_info *range,
 
   /* NULL check for both */
   if (!range || !addr_comp) {
-    fprintf(stderr, "No range or address comparator, ETMv4 address not set.");
+    fprintf(stderr, "[!] No range or address comparator, ETMv4 address not set.");
     return;
   }
 
@@ -249,6 +249,7 @@ int configure_trace(const struct board *board, struct cs_devices_t *devices,
   int i, r, error_count;
 
   if (!board || !devices) {
+    fprintf(stderr, "[!] Board or devices empty\n");
     return -1;
   }
 
@@ -261,23 +262,23 @@ int configure_trace(const struct board *board, struct cs_devices_t *devices,
     /* Try to get the cpu, attribute an ID, and initialize the ETM */
     devices->ptm[i] = cs_cpu_get_device(i, CS_DEVCLASS_SOURCE);
     if (devices->ptm[i] == CS_ERRDESC) {
-      fprintf(stderr, "** failed to get trace source for CPU #%d\n", i);
+      fprintf(stderr, "[!] Failed to get trace source for CPU #%d\n", i);
       return -1;
     }
     if (cs_set_trace_source_id(devices->ptm[i], 0x10 + i) < 0) {
-      fprintf(stderr, "** failed to set valid trace source ID for CPU #%d\n",
+      fprintf(stderr, "[!] Failed to set valid trace source ID for CPU #%d\n",
               i);
       return -1;
     }
     if (init_etm(devices->ptm[i]) < 0) {
-      fprintf(stderr, "** failed to initialize ETM for CPU #%d\n", i);
+      fprintf(stderr, "[!] Failed to initialize ETM for CPU #%d\n", i);
       return -1;
     }
   }
 
   /* Set STM trace ID */
   if (cs_set_trace_source_id(devices->itm, 0x20) < 0) {
-    fprintf(stderr, "** failed to set valid trace source ID STM\n");
+    fprintf(stderr, "[!] Failed to set valid trace source ID STM\n");
     return -1;
   }
 
@@ -291,11 +292,11 @@ int configure_trace(const struct board *board, struct cs_devices_t *devices,
       r = configure_etmv4_addr_range_cid(devices->ptm[i], range, range_count,
                                          (unsigned long)pid);
     } else {
-      fprintf(stderr, "Unsupported ETM for CPU #%d\n", i);
+      fprintf(stderr, "[!] Unsupported ETM for CPU #%d\n", i);
       continue;
     }
     if (r != 0) {
-      fprintf(stderr, "Configuration failed for CPU #%d\n", i);
+      fprintf(stderr, "[!] Configuration failed for CPU #%d\n", i);
       return r;
     }
   }
@@ -305,7 +306,7 @@ int configure_trace(const struct board *board, struct cs_devices_t *devices,
   ffcr_val = cs_device_read(devices->etb, CS_ETB_FLFMT_CTRL);
   ffcr_val |= CS_ETB_FLFMT_CTRL_StopFl;
   if (cs_device_write(devices->etb, CS_ETB_FLFMT_CTRL, ffcr_val) != 0) {
-    fprintf(stderr, "Failed to set stop on flush\n");
+    fprintf(stderr, "[!] Failed to set stop on flush\n");
   }
 
   /* Count and display configuration errors */
@@ -333,11 +334,11 @@ int enable_trace(const struct board *board, struct cs_devices_t *devices)
   /* Setup and enable ETR as the main sink and trace buffer */
   if (cs_sink_etr_setup(devices->etb, etr_ram_addr, etr_ram_size,
                         board->etr_axictl) != 0) {
-    fprintf(stderr, "Failed to setup ETR\n");
+    fprintf(stderr, "[!] Failed to setup ETR\n");
     return -1;
   }
   if (cs_sink_enable(devices->etb) != 0) {
-    fprintf(stderr, "Failed to enable ETR\n");
+    fprintf(stderr, "[!] Failed to enable ETR\n");
     return -1;
   }
 
@@ -345,7 +346,7 @@ int enable_trace(const struct board *board, struct cs_devices_t *devices)
    * ZCU104) */
   for (i = 0; i < devices->num_trace_sinks; i++) {
     if (cs_sink_etf_setup(devices->trace_sinks[i], CS_TMC_MODE_HWFIFO) != 0) {
-      fprintf(stderr, "Failed to setup ETF %d\n", i + 1);
+      fprintf(stderr, "[!] Failed to setup ETF %d\n", i + 1);
       return -1;
     }
     /* FIXME: Redundancy? */
@@ -354,7 +355,7 @@ int enable_trace(const struct board *board, struct cs_devices_t *devices)
     //   return -1;
     // }
     if (cs_tmc_hw_fifo_enable(devices->trace_sinks[i], /*bufwm=*/0x0) != 0) {
-      fprintf(stderr, "Could not enable sinks as hw fifo %d/%d\n", i + 1,
+      fprintf(stderr, "[!] Could not enable sinks as hw fifo %d/%d\n", i + 1,
               devices->num_trace_sinks);
       return -1;
     }
@@ -459,14 +460,14 @@ int enable_trace_sinks_only(const struct board *board, struct cs_devices_t *devi
   //   return -1;
   // }
   if (cs_sink_enable(devices->etb) != 0) {
-    fprintf(stderr, "Failed to enable ETR\n");
+    fprintf(stderr, "[!] Failed to enable ETR\n");
     return -1;
   }
 
   /* Enable both ETFs, the main trace buffer */
   for (i = 0; i < devices->num_trace_sinks; i++) {
     if (cs_sink_etf_setup(devices->trace_sinks[i], CS_TMC_MODE_HWFIFO) != 0) {
-      fprintf(stderr, "Failed to setup ETF %d\n", i);
+      fprintf(stderr, "[!] Failed to setup ETF %d\n", i);
       return -1;
     }
     /* FIXME: HW FIFO? */
@@ -475,7 +476,7 @@ int enable_trace_sinks_only(const struct board *board, struct cs_devices_t *devi
     //   return -1;
     // }
     if (cs_tmc_hw_fifo_enable(devices->trace_sinks[i], /*bufwm=*/0x0) != 0) {
-      fprintf(stderr, "Could not enable sinks as hw fifo %d/%d\n", i + 1,
+      fprintf(stderr, "[!] Could not enable sinks as hw fifo %d/%d\n", i + 1,
               devices->num_trace_sinks);
       return -1;
     }

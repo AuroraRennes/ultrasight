@@ -468,6 +468,7 @@ static int enable_cs_trace(pid_t pid)
 exit:
   /* Shutdown properly if configuration or enable failed */
   if (ret < 0) {
+    fprintf(stderr, "[!] Shutting down\n");
     cs_shutdown();
   }
   /* Release trace mutex */

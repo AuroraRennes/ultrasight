@@ -83,6 +83,7 @@ void child(char *argv[])
  */
 void parent(pid_t pid, int *child_status)
 {
+  int ret;
   int wstatus;
   struct timespec start_time, end_time;
   /** Wait for the child process to stop, specified by the pid.
@@ -96,7 +97,13 @@ void parent(pid_t pid, int *child_status)
     init_trace(getpid(), pid);
     /* Start the trace */
     printf("[+] Starting trace\n");
-    start_trace(pid, true);
+    ret = start_trace(pid, true);
+    if (ret < 0) {
+      perror("[!] Trace could not start");
+      /** TODO: Handle failed start, should probably:
+        * - kill child,
+        * - exit routine? */
+    }
     /* Send a continue ptrace request to the child pid */
     printf("[+] Sending CONT signal to child\n");
     /* Capture the start timestamp */
@@ -132,7 +139,6 @@ void parent(pid_t pid, int *child_status)
       trace_resume_callback();
       ptrace(PTRACE_CONT, pid, NULL, SIGCONT);
     } else if (WIFSTOPPED(wstatus) && WSTOPSIG(wstatus) == SIGSTOP) {
-      printf("HENLO stop\n");
       ptrace(PTRACE_CONT, pid, NULL, SIGSTOP);
       trace_suspend_callback();
     }
