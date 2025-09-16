@@ -211,9 +211,9 @@ static int trace_sink_polling(unsigned long fetch_threshold) {
     /* Current read write position, extracted from the device register */
     curr_offset = cs_get_buffer_rwp(devices.etb) - init_pos;
 
-    // printf("[+] - Fetcher: Waiting for threshold\n");
-    // printf("[~] INITPOS: 0x%lx\n", init_pos);
-    // printf("[~] CURROFF: 0x%lx\n", curr_offset);
+    printf("[+] - Fetcher: Waiting for threshold (0x%lx)\n", fetch_threshold);
+    printf("[~] INITPOS: 0x%lx\n", init_pos);
+    printf("[~] CURROFF: 0x%lx\n", curr_offset);
     if (curr_offset > fetch_threshold) {
 
       printf("[+] - Fetcher: threshold reached, stopping child\n");
@@ -311,17 +311,28 @@ static void *fetcher_worker(void *arg)
   int ret;
 
   if (etr_ram_size == 0) {
+    printf("[!] etr ram size 0? no udmabuf?\n");
     etr_ram_size = cs_get_buffer_size_bytes(devices.etb);
   }
   if (devices.trace_sinks[0]) {
     etf_ram_size = (size_t)cs_get_buffer_size_bytes(devices.trace_sinks[0]);
-    fetch_threshold = (etf_ram_size < etr_ram_size) ? etf_ram_size * 2 : etr_ram_size;
+    printf("[~] ETF RAM size: 0x%lx\n", etf_ram_size);
+    if (etf_ram_size < etr_ram_size) {
+      printf("[~] Threshold from ETF: 0x%lx\n", fetch_threshold);
+      fetch_threshold = etf_ram_size * 2;
+    } else {
+      /* Large buffer so no need to worry */
+      printf("[~] Threshold from ETR (large ETF): 0x%lx\n", fetch_threshold);
+      fetch_threshold = etr_ram_size;
+    }
   } else {
+    /* No sinks */
+    printf("[~] Threshold from ETR (no sinks): 0x%lx", fetch_threshold);
     fetch_threshold = etr_ram_size;
   }
 
   printf("[~] THRESH: 0x%lx\n", fetch_threshold);
-  fetch_threshold = 0x40000;
+  // fetch_threshold = 0x40000;
 
   while (1) {
     pthread_mutex_lock(&trace_event_mutex);
@@ -704,6 +715,8 @@ int init_trace(pid_t parent_pid, pid_t pid)
 
   ret = -1;
 
+  printf("[+] Initializing trace\n");
+
   /* Initialize mutexes and condition variables */
   pthread_mutex_init(&trace_mutex, NULL);
   pthread_mutex_init(&trace_state_mutex, NULL);
@@ -729,18 +742,21 @@ int init_trace(pid_t parent_pid, pid_t pid)
 
   /* Get udmabuf information (address and size), storing them in their
    * respective variables */
+   printf("[+] Getting u-dma-buf info\n");
   if (get_udmabuf_info(udmabuf_num, &etr_ram_addr, &etr_ram_size) < 0) {
     fprintf(stderr, "[!] Failed to get u-dma-buf info\n");
     goto exit;
   }
 
   /* Extract and store memory mapping information */
+  printf("[+] Getting map info\n");
   if ((range_count = setup_map_info(pid, map_info, RANGE_MAX)) < 0) {
     fprintf(stderr, "[!] setup_map_info() failed\n");
     goto exit;
   }
 
   /* Setup board variables for a given board defined in known_board.h */
+  printf("[+] Setting up board\n");
   if (setup_named_board(board_name, &board, &devices, known_boards) < 0) {
     fprintf(stderr, "[!] setup_named_board() failed\n");
     goto exit;
@@ -761,11 +777,11 @@ int init_trace(pid_t parent_pid, pid_t pid)
 
   if (fetcher_on){
     ret = pthread_create(&fetcher_thread, NULL, fetcher_worker, NULL);
-  if (ret != 0) {
-    fprintf(stderr, "[!] pthread_create() failed for the Fetcher: %d\n", ret);
-    goto exit;
-  }
-  printf("[+] fetcher thread created\n");
+    if (ret != 0) {
+      fprintf(stderr, "[!] pthread_create() failed for the Fetcher: %d\n", ret);
+      goto exit;
+    }
+    printf("[+] fetcher thread created\n");
   }
 
   /* Get the trace ID */
