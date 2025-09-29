@@ -162,6 +162,122 @@ int get_udmabuf_info(int udmabuf_num, unsigned long *phys_addr, size_t *size)
   return 0;
 }
 
+/* ============== KSIGHT ============== */
+
+/* Retrieve information (address,) of the ksight DMA ring buffer */
+int get_ksight_info(unsigned long *phys_addr)
+{
+  const char *ksight_root = "/sys/class/ksight";
+
+  int ret;
+  char ksight_path[PATH_MAX];
+  char tmp_path[PATH_MAX];
+  char attr[1024];
+  int fd;
+  struct stat sb;
+
+  ret = -1;
+
+  /* Check for existence "/sys/class/ksight/ksight" */
+  memset(ksight_path, '\0', sizeof(ksight_path));
+  snprintf(ksight_path, sizeof(ksight_path), "%s/ksight", ksight_root);
+  if (stat(ksight_path, &sb) != 0 || (!S_ISDIR(sb.st_mode))) {
+    fprintf(stderr, "ksight device not found\n");
+    return ret;
+  }
+
+  /* Read the "phys_addr" through the sysfs, opening the file in read-only */
+  memset(tmp_path, '\0', sizeof(tmp_path));
+  snprintf(tmp_path, sizeof(tmp_path), "%s/ksight/ring_phys", ksight_root);
+  if ((fd = open(tmp_path, O_RDONLY)) < 0) {
+    perror("open ksight/ring_phys error");
+    return -1;
+  }
+  /* Store the address in attr */
+  memset(attr, 0, sizeof(attr));
+  if (read(fd, attr, sizeof(attr)) < 0) {
+    perror("read ksight/ring_phys error");
+    close(fd);
+    return -1;
+  }
+  sscanf(attr, "%lx", phys_addr);
+  close(fd);
+  return 0;
+}
+
+/* Set the sysfs traced_pid attribute to the supplied one (0=all pids) */
+int ksight_set_traced_pid(pid_t pid) {
+  const char *ksight_root = "/sys/class/ksight";
+  char ksight_path[PATH_MAX];
+  char tmp_path[PATH_MAX];
+  char buf[64];
+  int fd;
+  int len;
+  struct stat sb;
+
+  /* Check for existence "/sys/class/ksight/ksight" */
+  memset(ksight_path, '\0', sizeof(ksight_path));
+  snprintf(ksight_path, sizeof(ksight_path), "%s/ksight", ksight_root);
+  if (stat(ksight_path, &sb) != 0 || (!S_ISDIR(sb.st_mode))) {
+    fprintf(stderr, "ksight device not found\n");
+    return -1;
+  }
+
+  /* Setup traced pid */
+  snprintf(tmp_path, sizeof(tmp_path), "%s/ksight/traced_pid", ksight_root);
+  fd = open(tmp_path, O_WRONLY);
+  if (fd < 0) {
+    perror("open ksight/traced_pid error");
+    return -1;
+  }
+
+  len = snprintf(buf, sizeof(buf), "%d\n", pid);
+  if (write(fd, buf, len) != len) {
+    perror("write ksight/traced_pid error");
+    close(fd);
+    return -1;
+  }
+  close(fd);
+  return 0;
+}
+
+/* Set the sysfs enable attribute to the supplied one (1=enabled, 0=disabled) */
+int ksight_set_enable(int enable) {
+  const char *ksight_root = "/sys/class/ksight";
+  char ksight_path[PATH_MAX];
+  char tmp_path[PATH_MAX];
+  char buf[64];
+  int fd;
+  int len;
+  struct stat sb;
+
+  /* Check for existence "/sys/class/ksight/ksight" */
+  memset(ksight_path, '\0', sizeof(ksight_path));
+  snprintf(ksight_path, sizeof(ksight_path), "%s/ksight", ksight_root);
+  if (stat(ksight_path, &sb) != 0 || (!S_ISDIR(sb.st_mode))) {
+    fprintf(stderr, "ksight device not found\n");
+    return -1;
+  }
+
+  /* Activate ksight, write 1 to ksight/enable */
+  snprintf(tmp_path, sizeof(tmp_path), "%s/ksight/enable", ksight_root);
+  fd = open(tmp_path, O_WRONLY);
+  if (fd < 0) {
+    perror("open ksight/enable error");
+    return -1;
+  }
+
+  len = snprintf(buf, sizeof(buf), "%d\n", enable);
+  if (write(fd, buf, len) != len) {
+    perror("write ksight/enable error");
+    close(fd);
+    return -1;
+  }
+  close(fd);
+  return 0;
+}
+
+
 /* ============== CPU AFFINITIES ============== */
 
 /**

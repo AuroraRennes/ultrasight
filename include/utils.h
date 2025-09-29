@@ -51,6 +51,9 @@ int get_preferred_cpu(pid_t pid);
 int find_free_cpu(void);
 int set_cpu_affinity(int cpu, pid_t pid);
 int get_udmabuf_info(int udmabuf_num, unsigned long *phys_addr, size_t *size);
+int get_ksight_info(unsigned long *phys_addr);
+int ksight_set_enable(int enable);
+int ksight_set_traced_pid(pid_t pid);
 int setup_stm_region(int *fd, void *map_base);
 void clean_stm_region(int *fd, void *map_base);
 

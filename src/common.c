@@ -41,12 +41,15 @@
 #include "known_boards.h"
 #include "config.h"
 #include "utils.h"
+#include "ksight.h"
 
 #define DEFAULT_TRACE_CPU 0
 #define DEFAULT_UDMABUF_NUM 0
 #define DEFAULT_ETF_SIZE 0x1000
 #define DEFAULT_TRACE_SIZE 0x80000
+#define DEFAULT_KSIGHT_SIZE 0x80000
 #define DEFAULT_TRACE_NAME "cstrace.bin"
+#define DEFAULT_KSIGHT_NAME "cstrace.ksight"
 
 #define TRACE_DISABLE_TRIAL 8
 #define TRACE_DISABLE_TRIAL_USLEEP 10
@@ -83,6 +86,8 @@ bool export_config = false;
 bool fetcher_on = false;
 unsigned long etr_ram_addr = 0;
 size_t etr_ram_size = 0;
+bool ksight_on = false;
+size_t ksight_ram_addr = 0;
 int range_count = 0;
 struct map_info map_info[RANGE_MAX];
 
@@ -97,9 +102,14 @@ unsigned int trace_bitmap_size = 0;
 static int trace_id = -1;
 static pid_t child_pid = -1;
 static bool is_first_trace = true;
+
 static void *trace_buf = NULL;
 static size_t trace_buf_size = 0;
 static void *trace_buf_ptr = NULL;
+
+static void *ksight_buf = NULL;
+static size_t ksight_buf_size = 0;
+static void *ksight_buf_ptr = NULL;
 
 static pthread_t fetcher_thread;
 static pthread_mutex_t trace_fetcher_mutex;
@@ -308,7 +318,6 @@ static void *fetcher_worker(void *arg)
   trace_event_t event;
   size_t etf_ram_size;
   unsigned long fetch_threshold;
-  int ret;
 
   if (etr_ram_size == 0) {
     printf("[!] etr ram size 0? no udmabuf?\n");
@@ -353,8 +362,6 @@ static void *fetcher_worker(void *arg)
 }
 
 
-
-
 /**
  * Allocate the trace buffer through mmap
  */
@@ -373,6 +380,24 @@ static int alloc_trace_buf(void)
 }
 
 /**
+ * Allocate the ksight buffer through mmap
+ */
+static int alloc_ksight_buf(void)
+{
+  ksight_buf = mmap(NULL, DEFAULT_TRACE_SIZE, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (ksight_buf == MAP_FAILED) {
+    fprintf(stderr, "[!] mmap failed when allocating ksight buffer\n");
+    return -1;
+  }
+  /* FIXME: Do not initialize global variables in the function */
+  ksight_buf_size = DEFAULT_TRACE_SIZE;
+  ksight_buf_ptr = ksight_buf;
+  return 0;
+}
+
+
+/**
  * Free trace buffer, emptying the device.etb then unmapping the corresponding
  * buffer.
  */
@@ -386,6 +411,17 @@ static void free_trace_buf(void)
   if (trace_buf) {
     munmap(trace_buf, trace_buf_size);
     trace_buf_ptr = NULL;
+  }
+}
+
+/**
+ * Free ksight buffer.
+ */
+static void free_ksight_buf(void)
+{
+  if (ksight_buf) {
+    munmap(ksight_buf, ksight_buf_size);
+    ksight_buf_ptr = NULL;
   }
 }
 
@@ -417,6 +453,43 @@ static int export_trace(const char *trace_name)
     goto exit;
   }
   fwrite(trace_buf, (size_t)((char *)trace_buf_ptr - (char *)trace_buf), 1, fp);
+  fclose(fp);
+  ret = 0;
+exit:
+  if (cwd) {
+    free(cwd);
+  }
+  return ret;
+}
+
+/**
+ * Export ksight events to file name "cwd/ksight_name"
+ */
+static int export_ksight(const char *ksight_name)
+{
+  int ret;
+  char *cwd;
+  char ksight_path[PATH_MAX];
+  FILE *fp;
+
+  ret = -1;
+
+  /* Get the current directory */
+  cwd = getcwd(NULL, 0);
+  if (!cwd) {
+    perror("getcwd");
+    goto exit;
+  }
+  /* Construct the file path "cwd/trace_name" */
+  memset(ksight_path, 0, sizeof(ksight_path));
+  snprintf(ksight_path, sizeof(ksight_path), "%s/%s", cwd, ksight_name);
+  /* Open file, write the trace buffer and close it */
+  fp = fopen(ksight_path, "wb");
+  if (!fp) {
+    perror("fopen");
+    goto exit;
+  }
+  fwrite(ksight_buf, (size_t)((char *)ksight_buf_ptr - (char *)ksight_buf), 1, fp);
   fclose(fp);
   ret = 0;
 exit:
@@ -644,6 +717,72 @@ exit:
   return ret;
 }
 
+/**
+ * Fetch the tag events data from the Ksight DMA
+ */
+int fetch_ksight_events()
+{
+    int ret = -1;
+    int fd;
+    ssize_t n;
+    size_t buf_remain;
+    void *new_ksight_buf;
+    size_t new_ksight_buf_size;
+
+    fd = open("/dev/ksight", O_RDONLY | O_NONBLOCK);
+    if (fd < 0) {
+        perror("[!] failed to open ksight character device");
+        goto exit;
+    }
+
+    /* Align the value of the new ksight buf pointer */
+    ksight_buf_ptr = (void *)ALIGN_UP((unsigned long)ksight_buf_ptr, 0x8);
+
+    /* Compute the remaining space in the buffer */
+    buf_remain = ksight_buf_size - (size_t)((char *)ksight_buf_ptr - (char *)ksight_buf);
+
+    while (1) {
+        if (buf_remain < sizeof(struct ksight_tag_event)) {
+            // Expand buffer
+            new_ksight_buf_size = ksight_buf_size * 2;
+            new_ksight_buf = mremap(ksight_buf, ksight_buf_size, new_ksight_buf_size, MREMAP_MAYMOVE);
+            if (!new_ksight_buf) {
+                perror("[!] mremap call failed when resizing ksight buffer\n");
+                goto close_exit;
+            }
+            ksight_buf_ptr = (char *)new_ksight_buf + ((char *)ksight_buf_ptr - (char *)ksight_buf);
+            ksight_buf = new_ksight_buf;
+            ksight_buf_size = new_ksight_buf_size;
+            buf_remain = ksight_buf_size - ((char *)ksight_buf_ptr - (char *)ksight_buf);
+        }
+
+        n = read(fd, ksight_buf_ptr, buf_remain);
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // No more data for now
+                ret = 0;
+                break;
+            }
+            perror("[!] Failed to read ksight character device");
+            goto close_exit;
+        }
+        if (n == 0) {
+            // No more events
+            ret = 0;
+            break;
+        }
+
+        ksight_buf_ptr = (char *)ksight_buf_ptr + n;
+        buf_remain = ksight_buf_size - (size_t)((char *)ksight_buf_ptr - (char *)ksight_buf);
+    }
+
+    ret = 0;
+
+close_exit:
+    close(fd);
+exit:
+    return ret;
+}
 
 
 /**
@@ -660,6 +799,11 @@ int start_trace(pid_t pid, bool use_pid_trace)
 
   /* Allocate the trace buffer */
   alloc_trace_buf();
+
+  /* Allocate the ksight tag events buffer */
+  if (ksight_on) {
+    alloc_ksight_buf();
+  }
 
   /* Enable the CoreSight trace */
   child_pid = pid;
@@ -716,8 +860,6 @@ int init_trace(pid_t parent_pid, pid_t pid)
 
   ret = -1;
 
-  printf("[+] Initializing trace\n");
-
   /* Initialize mutexes and condition variables */
   pthread_mutex_init(&trace_mutex, NULL);
   pthread_mutex_init(&trace_state_mutex, NULL);
@@ -743,10 +885,19 @@ int init_trace(pid_t parent_pid, pid_t pid)
 
   /* Get udmabuf information (address and size), storing them in their
    * respective variables */
-   printf("[+] Getting u-dma-buf info\n");
+  printf("[+] Getting u-dma-buf info\n");
   if (get_udmabuf_info(udmabuf_num, &etr_ram_addr, &etr_ram_size) < 0) {
     fprintf(stderr, "[!] Failed to get u-dma-buf info\n");
     goto exit;
+  }
+
+  /* Get ksight address information */
+  if (ksight_on) {
+    printf("[+] Getting ksight info\n");
+    if (get_ksight_info(&ksight_ram_addr) < 0) {
+      fprintf(stderr, "[!] Failed to get ksight info\n");
+      goto exit;
+    }
   }
 
   /* Extract and store memory mapping information */
@@ -819,6 +970,13 @@ void fini_trace(void)
   /* Export the trace to a file */
   export_trace(DEFAULT_TRACE_NAME);
 
+  /* Export the ksight trace events to a file */
+  if (ksight_on) {
+    fetch_ksight_events();
+    export_ksight(DEFAULT_KSIGHT_NAME);
+    free_ksight_buf();
+  }
+
   /* If needed, dump memory mappings to stderr */
   if (registration_verbose > 0) {
     dump_map_info(stderr, map_info, range_count);
@@ -835,8 +993,10 @@ void fini_trace(void)
    * been moved to a preload library instead.
    */
 
+#if 0
   /* Cleanup the STM region */
   clean_stm_region(&fd, map_base);
+#endif
 
   /* Clean up fetcher */
   pthread_cond_destroy(&trace_fetcher_cond);
