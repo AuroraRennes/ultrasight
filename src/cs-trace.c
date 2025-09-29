@@ -42,6 +42,7 @@ extern char *board_name;
 extern bool export_config;
 extern bool fetcher_on;
 extern int udmabuf_num;
+extern bool ksight_on;
 extern int trace_cpu;
 extern unsigned char *trace_bitmap;
 extern unsigned int trace_bitmap_size;
@@ -108,6 +109,12 @@ void parent(pid_t pid, int *child_status)
     printf("[+] Sending CONT signal to child\n");
     /* Capture the start timestamp */
     clock_gettime(CLOCK_MONOTONIC, &start_time);
+    /* Setup the traced_pid in ksight */
+    if (ksight_on) {
+      printf("[+] Enabling ksight tracing (pid %d)\n", pid);
+      ksight_set_traced_pid(pid);
+      ksight_set_enable(1);
+    }
     ptrace(PTRACE_CONT, pid, NULL, NULL);
   }
 
@@ -128,8 +135,14 @@ void parent(pid_t pid, int *child_status)
                   (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
         printf("[+] Child execution time (traced): %.6f seconds\n", elapsed);
 
+        if (ksight_on) {
+          printf("[+] Disabling ksight tracing\n");
+          ksight_set_enable(0);
+          ksight_set_traced_pid(0);
+        }
+
+        printf("[+] Stopping and cleaning up trace\n");
         stop_trace(true);
-        printf("[+] Finalizing trace\n");
         fini_trace();
         printf("[+] Done!\n");
         break;
@@ -171,6 +184,8 @@ static void usage(char *argv0)
           "  -u, --udmabuf=INT\t\tspecify u-dma-buf device number to use "
           "(default: %d)",
           udmabuf_num);
+  fprintf(stderr, "  -k, --ksight\t\tenable ksight kernel tag events tracing (default: %d)\n",
+          ksight_on);
   fprintf(stderr,
           "  -v, --verbose[=INT]\t\tverbose output level (default: %d)\n",
           registration_verbose);
@@ -189,6 +204,7 @@ int main(int argc, char *argv[])
       {"export", no_argument, NULL, 'e'},
       {"fetcher", no_argument, NULL, 'f'},
       {"udmabuf", required_argument, NULL, 'u'},
+      {"ksight", no_argument, NULL, 'k'},
       {"verbose", optional_argument, NULL, 'v'},
       {"help", no_argument, NULL, 'h'},
       {0, 0, 0, 0},
@@ -209,7 +225,7 @@ int main(int argc, char *argv[])
     exit(EXIT_SUCCESS);
   }
   /* Parse CLI elements */
-  while ((opt = getopt_long(argc, argv, "b:c:e:f:v::h", long_options,
+  while ((opt = getopt_long(argc, argv, "b:c:e:f:k:v::h", long_options,
                             &option_index)) != -1) {
     switch (opt) {
       /* Board name */
@@ -230,6 +246,9 @@ int main(int argc, char *argv[])
       /* udmabuf number */
       case 'u':
         udmabuf_num = atoi(optarg);
+        break;
+      case 'k':
+        ksight_on = true;
         break;
       /* Verbose option */
       case 'v':

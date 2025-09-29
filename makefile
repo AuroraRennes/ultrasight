@@ -56,6 +56,7 @@ HDRS:= \
 	$(INC)/common.h \
 	$(INC)/utils.h \
 	$(INC)/known_boards.h \
+	$(INC)/ksight.h \
 
 OBJS:= \
 	$(SRC)/common.o \
@@ -77,7 +78,7 @@ else
 endif
 
 CS_TRACE:=cs-trace
-CS_TRACE_FLAGS?=--export
+CS_TRACE_FLAGS?=--export --ksight
 CS_TRACE_OBJS:= \
 	$(OBJS) \
 	$(SRC)/cs-trace.o
