@@ -130,10 +130,8 @@ static int do_registration_zcu104(struct cs_devices_t *devices)
 
   /* TPIU */
   /* outs */
-#if 0
   cs_cti_connect_trigdst(cs_cti_trigdst(cti0, 6), tpiu, CS_TRIGIN_ETB_FLUSHIN);
   cs_cti_connect_trigdst(cs_cti_trigdst(cti0, 7), tpiu, CS_TRIGIN_ETB_TRIGIN);
-#endif
 
   /* STM */
   /* ins */

@@ -342,6 +342,16 @@ int enable_trace(const struct board *board, struct cs_devices_t *devices)
     return -1;
   }
 
+  /* Setup TPIU to export the trace to the PL.
+   * WARNING: This requires the TPIU registers to be powered (i.e. a psu_init that includes TPIU) */
+  if(devices->tpiu != NULL) {
+    if(cs_sink_enable(devices->tpiu)){
+      fprintf(stderr, "[!] Failed to setup TPIU\n");
+    return -1;
+    }
+    printf("[+] TPIU enabled!\n");
+  }
+
   /* Setup and enable ETFs as HW FIFO sinks in the system (there are two on the
    * ZCU104) */
   for (i = 0; i < devices->num_trace_sinks; i++) {
@@ -424,6 +434,15 @@ int disable_trace(const struct board *board, struct cs_devices_t *devices)
   /* Disable the main sink (ETR) */
   cs_sink_disable(devices->etb);
 
+  /* Disable TPIU if needed */
+  if(devices->tpiu != NULL) {
+    if(cs_sink_disable(devices->tpiu)){
+      fprintf(stderr, "[!] Failed to disable TPIU\n");
+      return -1;
+    }
+    printf("[+] TPIU disabled!\n");
+  }
+
   /* If needed, show the ETM config */
   if (registration_verbose > 1) {
     for (i = 0; i < board->n_cpu; ++i) {
@@ -454,14 +473,18 @@ int enable_trace_sinks_only(const struct board *board, struct cs_devices_t *devi
   }
 
     /* Setup and enable ETR as the main sink and trace buffer */
-  // if (cs_sink_etr_setup(devices->etb, etr_ram_addr, etr_ram_size,
-  //                       board->etr_axictl) != 0) {
-  //   fprintf(stderr, "Failed to setup ETR\n");
-  //   return -1;
-  // }
   if (cs_sink_enable(devices->etb) != 0) {
     fprintf(stderr, "[!] Failed to enable ETR\n");
     return -1;
+  }
+
+  /* Setup TPIU to export the trace to the PL.
+   * WARNING: This requires the TPIU registers to be powered (i.e. a psu_init that includes TPIU) */
+  if (devices->tpiu != NULL) {
+    if (cs_sink_enable(devices->etb) != 0) {
+      fprintf(stderr, "[!] Failed to enable TPIU\n");
+      return -1;
+    }
   }
 
   /* Enable both ETFs, the main trace buffer */

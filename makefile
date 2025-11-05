@@ -123,7 +123,7 @@ trace: $(CS_TRACE) $(TESTS) disable_aslr
 	sudo $(realpath $(CS_TRACE)) $(CS_TRACE_FLAGS) -- $(TRACEE_ENVS) $(realpath $(TRACEE)) $(TRACEE_ARGS)
 	cp $(realpath $(TRACEE)) $(DIR)
 	objdump -d $(realpath $(TRACEE)) > $(DIR)/$(notdir $(basename $(TRACEE))).dump
-	$(realpath $(DECODER)) -ss_dir $(DIR) -logfile -logfilename $(DECODED_TRACE)
+	$(realpath $(DECODER)) -ss_dir $(DIR) -stats -logfile -logfilename $(DECODED_TRACE)
 	rm -f $(LATEST)
 	ln $(DECODED_TRACE) $(LATEST)
 
