@@ -533,6 +533,15 @@ int disable_trace_sinks_only(struct cs_devices_t *devices)
   /* Set FFCR:FlushMan bit to stop capture. */
   cs_etb_flush_and_wait_stop(devices);
 
+  /* Disable TPIU if needed */
+  if(devices->tpiu != NULL) {
+    if(cs_sink_disable(devices->tpiu)){
+      fprintf(stderr, "[!] Failed to disable TPIU\n");
+      return -1;
+    }
+    printf("[+] TPIU disabled!\n");
+  }
+
   /* Disable intermediate sinks (ETFs) */
   for (i = 0; i < devices->num_trace_sinks; i++) {
     if (devices->trace_sinks[i]) {
