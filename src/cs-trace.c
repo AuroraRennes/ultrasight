@@ -60,6 +60,7 @@ void child(char *argv[])
     perror("[!] Ptrace request traceme failed");
     exit(1);
   }
+  printf("[+] child: TRACEME setup\n");
 
   /* Redefine LD_PRELOAD to map/unmap the stm region in the process */
   setenv("LD_PRELOAD", "/home/aurora/qtests/coresight/ultrasight/lib/libstm_preload.so",
@@ -73,6 +74,8 @@ void child(char *argv[])
     perror("[!] Tracee program not executable");
     exit(1);
   }
+
+  printf("[+] child: launching program with execve\n");
   /* execute the traced program, passed as arguments after -- in the main CLI */
   execvpe(argv[0], argv, environ);
 }
@@ -120,7 +123,7 @@ void parent(pid_t pid, int *child_status)
 
   while (1) {
     /* Wait for the child process to stop */
-    waitpid(pid, &wstatus, WUNTRACED | WCONTINUED);
+    waitpid(pid, &wstatus, 0);
     /** If the child process exited normally, stop and finalize the trace before
      * breaking from the loop else, if it was stopped using SIGSTOP, the
      * function triggers the callback function.
@@ -148,12 +151,38 @@ void parent(pid_t pid, int *child_status)
         break;
       }
     } else if (WIFCONTINUED(wstatus)) {
-      printf("Trying to resume child\n");
-      trace_resume_callback();
-      ptrace(PTRACE_CONT, pid, NULL, SIGCONT);
-    } else if (WIFSTOPPED(wstatus) && WSTOPSIG(wstatus) == SIGSTOP) {
-      ptrace(PTRACE_CONT, pid, NULL, SIGSTOP);
-      trace_suspend_callback();
+      /* Note: Under ptrace, every signal is now a stop */
+      ptrace(PTRACE_CONT, pid, NULL, 0);
+      if (fetcher_on) {
+        printf("[~] Fetcher: Trying to resume child\n");
+        trace_resume_callback();
+      } else {
+        printf("[~] Kernel: Continued by the kernel driver\n");
+      }
+
+    } else if (WIFSTOPPED(wstatus)) {
+
+      int sig = WSTOPSIG(wstatus);
+
+      if (sig == SIGSTOP) {
+        if (fetcher_on) {
+          printf("[~] Fetcher: Trying to stop child\n");
+          trace_suspend_callback();
+        } else {
+          printf("[~] Kernel: Stopped by the kernel driver\n");
+        }
+      }
+
+      else if (sig == SIGCONT) {
+        if (fetcher_on) {
+          printf("[~] Fetcher: Trying to resume child\n");
+          trace_resume_callback();
+        } else {
+          ptrace(PTRACE_CONT, pid, NULL, 0);
+          printf("[~] Kernel: Continued by the kernel driver\n");
+        }
+      }
+
     }
   }
 
