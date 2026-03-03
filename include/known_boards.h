@@ -167,11 +167,66 @@ static int do_registration_zcu104(struct cs_devices_t *devices)
   return 0;
 }
 
+
+static int do_registration_zynq7000(struct cs_devices_t *devices)
+{
+  /* Taken from UG585, Table 28-2 and 28-5 */
+  enum { A9_0, A9_1 };
+
+  cs_device_t funnel, tpiu, etb, ptm0, ptm1, rep;
+
+  cs_register_romtable(0xF8880000); /* Cortex-A9 ROM table registration */
+
+  /* CTI Affinities */
+  cs_device_set_affinity(cs_device_register(0xF8898000), A9_0);
+  cs_device_set_affinity(cs_device_register(0xF8899000), A9_1);
+
+  /* PMU Affinities */
+  cs_device_set_affinity(cs_device_register(0xF8891000), A9_0);
+  cs_device_set_affinity(cs_device_register(0xF8893000), A9_1);
+
+  /* ETM Affinities */
+  cs_device_set_affinity(cs_device_register(0xF889C000), A9_0);
+  cs_device_set_affinity(cs_device_register(0xF889D000), A9_1);
+
+  /* Funnel Configuration */
+  funnel = cs_device_get(0xF8804000);
+  cs_atb_register(cs_cpu_get_device(A9_0, CS_DEVCLASS_SOURCE), 0, funnel, 0);
+  cs_atb_register(cs_cpu_get_device(A9_1, CS_DEVCLASS_SOURCE), 0, funnel, 1);
+
+  /* Port 2 is for FTM, 3 for ITM (not supported for now), 4-7 are unused */
+  /* cs_atb_register(ftm, 0, funnel, 0); */
+  /* cs_atb_register(itm, 0, funnel, 1); */
+
+  /* Replicator configuration, gets input from funnel and outputs to ETB and TPIU */
+  rep = cs_atb_add_replicator(2);
+  cs_atb_register(funnel, 0, rep, 0);
+
+  /* No mention of port numbers for the replicator output, gathered from the decompiled device tree */
+  tpiu = cs_device_get(0xF8803000);
+  cs_atb_register(rep, 0, tpiu, 0);
+
+  etb = cs_device_get(0xF8801000);
+  cs_atb_register(rep, 1, etb, 0);
+
+  /* Sink configuration */
+  devices->etb = etb;
+  devices->tpiu = tpiu;
+  devices->num_trace_sinks = 0;
+
+  return 0;
+}
+
 const struct board known_boards[] = {
     {
         .do_registration = do_registration_zcu104,
         .n_cpu = 4,
         .hardware = "ZCU-104",
+    },
+    {
+        .do_registration = do_registration_zynq7000,
+        .n_cpu = 2,
+        .hardware = "ZYNQ-7000",
     },
     {}};
 
