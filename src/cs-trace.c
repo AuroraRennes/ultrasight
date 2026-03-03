@@ -60,11 +60,10 @@ void child(char *argv[])
     perror("[!] Ptrace request traceme failed");
     exit(1);
   }
-  printf("[+] child: TRACEME setup\n");
+  printf("[+] Child: TRACEME setup\n");
 
   /* Redefine LD_PRELOAD to map/unmap the stm region in the process */
-  setenv("LD_PRELOAD", "/home/aurora/qtests/coresight/ultrasight/lib/libstm_preload.so",
-         1);
+  // setenv("LD_PRELOAD", "/home/aurora/qtests/coresight/ultrasight/lib/libstm_preload.so", 1);
   /* Check file existence and executability */
   if (access(argv[0], F_OK) != 0) {
     perror("[!] Tracee program not found");
@@ -95,12 +94,12 @@ void parent(pid_t pid, int *child_status)
    */
   waitpid(pid, &wstatus, 0);
   /* If the child process has stopped due to a vfork() event */
-  if (WIFSTOPPED(wstatus) && WSTOPSIG(wstatus) == PTRACE_EVENT_VFORK_DONE) {
+  if (WIFSTOPPED(wstatus) && WSTOPSIG(wstatus) == SIGTRAP) {
     /* Initialize the trace */
     printf("[+] Initializing trace\n");
     init_trace(getpid(), pid);
     /* Start the trace */
-    printf("[+] Starting trace\n");
+    printf("[+] Starting trace for pid: %d\n", pid);
     ret = start_trace(pid, true);
     if (ret < 0) {
       perror("[!] Trace could not start");
@@ -108,22 +107,26 @@ void parent(pid_t pid, int *child_status)
         * - kill child,
         * - exit routine? */
     }
-    /* Send a continue ptrace request to the child pid */
-    printf("[+] Sending CONT signal to child\n");
-    /* Capture the start timestamp */
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
+
     /* Setup the traced_pid in ksight */
     if (ksight_on) {
       printf("[+] Enabling ksight tracing (pid %d)\n", pid);
       ksight_set_traced_pid(pid);
       ksight_set_enable(1);
     }
-    ptrace(PTRACE_CONT, pid, NULL, NULL);
+
+    /* Send a continue ptrace request to the child pid */
+    printf("[+] Sending CONT signal to child\n");
+
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
+
+    ptrace(PTRACE_DETACH, pid, NULL, NULL);
   }
 
   while (1) {
     /* Wait for the child process to stop */
-    waitpid(pid, &wstatus, 0);
+    waitpid(pid, &wstatus, WUNTRACED | WCONTINUED);
+
     /** If the child process exited normally, stop and finalize the trace before
      * breaking from the loop else, if it was stopped using SIGSTOP, the
      * function triggers the callback function.
@@ -151,38 +154,23 @@ void parent(pid_t pid, int *child_status)
         break;
       }
     } else if (WIFCONTINUED(wstatus)) {
-      /* Note: Under ptrace, every signal is now a stop */
-      ptrace(PTRACE_CONT, pid, NULL, 0);
-      if (fetcher_on) {
-        printf("[~] Fetcher: Trying to resume child\n");
-        trace_resume_callback();
-      } else {
-        printf("[~] Kernel: Continued by the kernel driver\n");
-      }
-
+      // printf("[+] Child resumed by kernel\n");
     } else if (WIFSTOPPED(wstatus)) {
-
       int sig = WSTOPSIG(wstatus);
-
-      if (sig == SIGSTOP) {
-        if (fetcher_on) {
+      /* If the fetcher is setup and uses ptrace, all signals are stops */
+      if (fetcher_on) {
+        if (sig == SIGSTOP) {
           printf("[~] Fetcher: Trying to stop child\n");
           trace_suspend_callback();
-        } else {
-          printf("[~] Kernel: Stopped by the kernel driver\n");
-        }
-      }
-
-      else if (sig == SIGCONT) {
-        if (fetcher_on) {
+        } else if (sig == SIGCONT) {
           printf("[~] Fetcher: Trying to resume child\n");
           trace_resume_callback();
-        } else {
-          ptrace(PTRACE_CONT, pid, NULL, 0);
-          printf("[~] Kernel: Continued by the kernel driver\n");
+        }
+      } else {
+        if (sig == SIGSTOP) {
+          // printf("[+] Child stopped by kernel\n");
         }
       }
-
     }
   }
 
