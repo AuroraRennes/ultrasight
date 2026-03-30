@@ -31,6 +31,9 @@
 
 #include "common.h"
 #include "config.h"
+#include "decoder_stats.h"
+#include "edge_stats.h"
+#include "bitmap_dma.h"
 
 /**
  * Extern value definitions
@@ -89,6 +92,10 @@ void parent(pid_t pid, int *child_status)
   int ret;
   int wstatus;
   struct timespec start_time, end_time;
+  dec_stats_t etm_handle, stm_handle;
+  edge_stats_t edge_handle;
+  bitmap_dma_t dma_handle;
+
   /** Wait for the child process to stop, specified by the pid.
    *  The status of the child process is stored in wstatus.
    */
@@ -114,6 +121,27 @@ void parent(pid_t pid, int *child_status)
       ksight_set_traced_pid(pid);
       ksight_set_enable(1);
     }
+
+    /* Initializing handles for AXI stats collection */
+    ret = dec_stats_open(&etm_handle);
+    if (ret < 0) {
+      perror("[!] ETM AXI stats mapping issue");
+    }
+
+    ret = edge_stats_open(&edge_handle);
+    if (ret < 0) {
+      perror("[!] EDGE AXI stats mapping issue");
+    }
+
+    /* Setup DMA once before trace starts */
+    ret = bitmap_dma_open(&dma_handle, DEFAULT_TRACE_BITMAP_SIZE);
+    if (ret < 0) perror("[!] Bitmap DMA setup issue");
+
+    /* Enable stat collection */
+    dec_stats_enable(&etm_handle);
+
+    /* Reset edge extractor stats info */
+    edge_stats_reset(&edge_handle);
 
     /* Send a continue ptrace request to the child pid */
     printf("[+] Sending CONT signal to child\n");
@@ -151,6 +179,36 @@ void parent(pid_t pid, int *child_status)
         stop_trace(true);
         fini_trace();
         printf("[+] Done!\n");
+
+        /* Disable stats collection */
+        dec_stats_disable(&etm_handle);
+
+        /* Print stats info*/
+        printf("============== ETM ==============\n");
+        dec_stats_print(&etm_handle);
+
+        printf("============= EDGES =============\n");
+        edge_stats_print(&edge_handle);
+
+        /* Trigger DMA readout and wait for completion */
+        printf("[+] Triggering bitmap DMA readout\n");
+
+        /* Measure time of DMA transfer */
+        struct timespec start, end;
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        ret = bitmap_dma_transfer(&dma_handle);
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        double elapsed_us = (end.tv_sec - start.tv_sec) * 1e6 +
+                            (end.tv_nsec - start.tv_nsec) / 1e3;
+
+        if (ret < 0) perror("[!] Bitmap DMA transfer failed");
+        printf("[+] Bitmap DMA complete in %.2f us, %zu bytes in udmabuf\n",
+               elapsed_us, dma_handle.buf_size);
+
+        /* Close handles*/
+        dec_stats_close(&etm_handle);
+        edge_stats_close(&edge_handle);
+
         break;
       }
     } else if (WIFCONTINUED(wstatus)) {

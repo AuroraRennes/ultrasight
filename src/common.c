@@ -964,11 +964,11 @@ void fini_trace(void)
     set_trace_state(fini_state);
     pthread_join(fetcher_thread, NULL);
   } else {
-    fetch_trace();
+    // fetch_trace();
   }
 
   /* Export the trace to a file */
-  export_trace(DEFAULT_TRACE_NAME);
+  // export_trace(DEFAULT_TRACE_NAME);
 
   /* Export the ksight trace events to a file */
   if (ksight_on) {

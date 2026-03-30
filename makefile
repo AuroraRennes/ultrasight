@@ -57,11 +57,17 @@ HDRS:= \
 	$(INC)/utils.h \
 	$(INC)/known_boards.h \
 	$(INC)/ksight.h \
+	$(INC)axi_regs.h \
+	$(INC)decoder_stats.h \
+	$(INC)edge_stats.h \
+	$(INC)bitmap_dma.h \
 
 OBJS:= \
 	$(SRC)/common.o \
 	$(SRC)/config.o \
 	$(SRC)/utils.o \
+	$(SRC)/axi_regs.o \
+	$(SRC)/bitmap_dma.o \
 
 CFLAGS:= \
 	-std=c11 \
@@ -78,7 +84,7 @@ else
 endif
 
 CS_TRACE:=cs-trace
-CS_TRACE_FLAGS?=--export --ksight
+CS_TRACE_FLAGS?=--export # --ksight
 CS_TRACE_OBJS:= \
 	$(OBJS) \
 	$(SRC)/cs-trace.o
