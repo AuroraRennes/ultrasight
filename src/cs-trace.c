@@ -44,6 +44,7 @@ extern int registration_verbose;
 extern char *board_name;
 extern bool export_config;
 extern bool fetcher_on;
+extern bool no_trace;
 extern int udmabuf_num;
 extern bool ksight_on;
 extern int trace_cpu;
@@ -91,64 +92,61 @@ void parent(pid_t pid, int *child_status)
 {
   int ret;
   int wstatus;
-  struct timespec start_time, end_time;
+  struct timespec global_start, global_end;
+  struct timespec instr_start, instr_end;
+  struct timespec child_start, child_end;
+  double child_elapsed = 0.0, instr_elapsed = 0.0, global_elapsed = 0.0;
   dec_stats_t etm_handle, stm_handle;
   edge_stats_t edge_handle;
   bitmap_dma_t dma_handle;
 
-  /** Wait for the child process to stop, specified by the pid.
-   *  The status of the child process is stored in wstatus.
-   */
+  /* Global timer starts before anything, including the initial waitpid */
+  clock_gettime(CLOCK_MONOTONIC, &global_start);
+
   waitpid(pid, &wstatus, 0);
   /* If the child process has stopped due to a vfork() event */
   if (WIFSTOPPED(wstatus) && WSTOPSIG(wstatus) == SIGTRAP) {
-    /* Initialize the trace */
-    printf("[+] Initializing trace\n");
-    init_trace(getpid(), pid);
-    /* Start the trace */
-    printf("[+] Starting trace for pid: %d\n", pid);
-    ret = start_trace(pid, true);
-    if (ret < 0) {
-      perror("[!] Trace could not start");
-      /** TODO: Handle failed start, should probably:
-        * - kill child,
-        * - exit routine? */
-    }
+    if (no_trace) {
+      /* Baseline mode: ptrace attach/detach only, no tracing infrastructure */
+      printf("[+] No-trace mode: detaching immediately\n");
+      clock_gettime(CLOCK_MONOTONIC, &child_start);
+      ptrace(PTRACE_DETACH, pid, NULL, NULL);
+    } else {
+      /* Instrumentation setup timer starts here */
+      clock_gettime(CLOCK_MONOTONIC, &instr_start);
 
-    /* Setup the traced_pid in ksight */
-    if (ksight_on) {
-      printf("[+] Enabling ksight tracing (pid %d)\n", pid);
-      ksight_set_traced_pid(pid);
-      ksight_set_enable(1);
-    }
+      printf("[+] Initializing trace\n");
+      init_trace(getpid(), pid);
+      printf("[+] Starting trace for pid: %d\n", pid);
+      ret = start_trace(pid, true);
+      if (ret < 0) {
+        perror("[!] Trace could not start");
+      }
 
-    /* Initializing handles for AXI stats collection */
-    ret = dec_stats_open(&etm_handle);
-    if (ret < 0) {
-      perror("[!] ETM AXI stats mapping issue");
-    }
+      if (ksight_on) {
+        printf("[+] Enabling ksight tracing (pid %d)\n", pid);
+        ksight_set_traced_pid(pid);
+        ksight_set_enable(1);
+      }
 
-    ret = edge_stats_open(&edge_handle);
-    if (ret < 0) {
-      perror("[!] EDGE AXI stats mapping issue");
-    }
+      ret = dec_stats_open(&etm_handle);
+      if (ret < 0) perror("[!] ETM AXI stats mapping issue");
 
-    /* Setup DMA once before trace starts */
-    ret = bitmap_dma_open(&dma_handle, DEFAULT_TRACE_BITMAP_SIZE);
-    if (ret < 0) perror("[!] Bitmap DMA setup issue");
+      ret = edge_stats_open(&edge_handle);
+      if (ret < 0) perror("[!] EDGE AXI stats mapping issue");
 
-    /* Enable stat collection */
-    dec_stats_enable(&etm_handle);
+      ret = bitmap_dma_open(&dma_handle, DEFAULT_TRACE_BITMAP_SIZE);
+      if (ret < 0) perror("[!] Bitmap DMA setup issue");
 
-    /* Reset edge extractor stats info */
-    edge_stats_reset(&edge_handle);
+      dec_stats_enable(&etm_handle);
+      edge_stats_reset(&edge_handle);
 
-    /* Send a continue ptrace request to the child pid */
-    printf("[+] Sending CONT signal to child\n");
+      printf("[+] Sending CONT signal to child\n");
 
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
-
-    ptrace(PTRACE_DETACH, pid, NULL, NULL);
+      /* Child timer starts as child is released */
+      clock_gettime(CLOCK_MONOTONIC, &child_start);
+      ptrace(PTRACE_DETACH, pid, NULL, NULL);
+    } /* end if/else no_trace */
   }
 
   while (1) {
@@ -160,54 +158,70 @@ void parent(pid_t pid, int *child_status)
      * function triggers the callback function.
      */
     if (WIFEXITED(wstatus)) {
-      /* Capture the end time */
-      clock_gettime(CLOCK_MONOTONIC, &end_time);
-      if (wstatus == 0) {
-        printf("[+] Child exited with status %d, stopping trace\n", wstatus);
-        /* Print elapsed time */
-        double elapsed = (end_time.tv_sec - start_time.tv_sec) +
-                  (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
-        printf("[+] Child execution time (traced): %.6f seconds\n", elapsed);
+      /* Child timer ends the moment the child exits */
+      clock_gettime(CLOCK_MONOTONIC, &child_end);
 
-        if (ksight_on) {
-          printf("[+] Disabling ksight tracing\n");
-          ksight_set_enable(0);
-          ksight_set_traced_pid(0);
+      if (wstatus == 0) {
+        printf("[+] Child exited with status %d\n", wstatus);
+
+        if (!no_trace) {
+          if (ksight_on) {
+            printf("[+] Disabling ksight tracing\n");
+            ksight_set_enable(0);
+            ksight_set_traced_pid(0);
+          }
+
+          printf("[+] Stopping and cleaning up trace\n");
+          stop_trace(true);
+          fini_trace();
+          printf("[+] Done!\n");
+
+          dec_stats_disable(&etm_handle);
+
+          printf("============== ETM ==============\n");
+          dec_stats_print(&etm_handle);
+          printf("============= EDGES =============\n");
+          edge_stats_print(&edge_handle);
+
+          printf("[+] Triggering bitmap DMA readout\n");
+          struct timespec dma_start, dma_end;
+          clock_gettime(CLOCK_MONOTONIC, &dma_start);
+          ret = bitmap_dma_transfer(&dma_handle);
+          clock_gettime(CLOCK_MONOTONIC, &dma_end);
+          double dma_elapsed_us = (dma_end.tv_sec - dma_start.tv_sec) * 1e6 +
+                                  (dma_end.tv_nsec - dma_start.tv_nsec) / 1e3;
+          if (ret < 0) perror("[!] Bitmap DMA transfer failed");
+          printf("[+] Bitmap DMA complete in %.2f us, %zu bytes in udmabuf\n",
+                 dma_elapsed_us, dma_handle.buf_size);
+
+          dec_stats_close(&etm_handle);
+          edge_stats_close(&edge_handle);
+
+          /* Instrumentation timer ends after full teardown */
+          clock_gettime(CLOCK_MONOTONIC, &instr_end);
+          instr_elapsed = (instr_end.tv_sec - instr_start.tv_sec) +
+                          (instr_end.tv_nsec - instr_start.tv_nsec) / 1e9;
         }
 
-        printf("[+] Stopping and cleaning up trace\n");
-        stop_trace(true);
-        fini_trace();
-        printf("[+] Done!\n");
+        /* Global timer ends after everything */
+        clock_gettime(CLOCK_MONOTONIC, &global_end);
 
-        /* Disable stats collection */
-        dec_stats_disable(&etm_handle);
+        child_elapsed = (child_end.tv_sec - child_start.tv_sec) +
+                        (child_end.tv_nsec - child_start.tv_nsec) / 1e9;
+        global_elapsed = (global_end.tv_sec - global_start.tv_sec) +
+                         (global_end.tv_nsec - global_start.tv_nsec) / 1e9;
 
-        /* Print stats info*/
-        printf("============== ETM ==============\n");
-        dec_stats_print(&etm_handle);
-
-        printf("============= EDGES =============\n");
-        edge_stats_print(&edge_handle);
-
-        /* Trigger DMA readout and wait for completion */
-        printf("[+] Triggering bitmap DMA readout\n");
-
-        /* Measure time of DMA transfer */
-        struct timespec start, end;
-        clock_gettime(CLOCK_MONOTONIC, &start);
-        ret = bitmap_dma_transfer(&dma_handle);
-        clock_gettime(CLOCK_MONOTONIC, &end);
-        double elapsed_us = (end.tv_sec - start.tv_sec) * 1e6 +
-                            (end.tv_nsec - start.tv_nsec) / 1e3;
-
-        if (ret < 0) perror("[!] Bitmap DMA transfer failed");
-        printf("[+] Bitmap DMA complete in %.2f us, %zu bytes in udmabuf\n",
-               elapsed_us, dma_handle.buf_size);
-
-        /* Close handles*/
-        dec_stats_close(&etm_handle);
-        edge_stats_close(&edge_handle);
+        /* Print all timers together */
+        printf("============= TIMING ============\n");
+        printf("[+] Child execution time:          %.6f seconds\n", child_elapsed);
+        if (!no_trace) {
+          printf("[+] Instrumentation time:          %.6f seconds\n", instr_elapsed);
+          printf("[+] Instrumentation overhead:      %.6f seconds\n", instr_elapsed - child_elapsed);
+          printf("[+] Fork/exec/waitpid stall:       %.6f seconds\n", global_elapsed - instr_elapsed);
+        } else {
+          printf("[+] Fork/exec/waitpid stall:       %.6f seconds\n", global_elapsed - child_elapsed);
+        }
+        printf("[+] Global time:                   %.6f seconds\n", global_elapsed);
 
         break;
       }
@@ -238,6 +252,7 @@ void parent(pid_t pid, int *child_status)
   }
 }
 
+
 /**
  * CLI usage display
  */
@@ -264,6 +279,8 @@ static void usage(char *argv0)
   fprintf(stderr,
           "  -v, --verbose[=INT]\t\tverbose output level (default: %d)\n",
           registration_verbose);
+  fprintf(stderr, "  -n, --no-trace\t\tdisable tracing (default: %d)\n",
+          no_trace);
   fprintf(stderr, "  -h, --help\t\t\tshow this help\n");
 }
 
@@ -281,6 +298,7 @@ int main(int argc, char *argv[])
       {"udmabuf", required_argument, NULL, 'u'},
       {"ksight", no_argument, NULL, 'k'},
       {"verbose", optional_argument, NULL, 'v'},
+      {"notrace", optional_argument, NULL, 'n'},
       {"help", no_argument, NULL, 'h'},
       {0, 0, 0, 0},
   };
@@ -300,7 +318,7 @@ int main(int argc, char *argv[])
     exit(EXIT_SUCCESS);
   }
   /* Parse CLI elements */
-  while ((opt = getopt_long(argc, argv, "b:c:e:f:k:v::h", long_options,
+  while ((opt = getopt_long(argc, argv, "b:c:e:f:k:v:n::h", long_options,
                             &option_index)) != -1) {
     switch (opt) {
       /* Board name */
@@ -332,6 +350,10 @@ int main(int argc, char *argv[])
         } else {
           registration_verbose = 1;
         }
+        break;
+      /* No trace option */
+      case 'n':
+        no_trace = true;
         break;
       /* Help display */
       case 'h':

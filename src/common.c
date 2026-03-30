@@ -84,6 +84,7 @@ int udmabuf_num = DEFAULT_UDMABUF_NUM;
 int trace_cpu = -1;
 bool export_config = false;
 bool fetcher_on = false;
+bool no_trace = false;
 unsigned long etr_ram_addr = 0;
 size_t etr_ram_size = 0;
 bool ksight_on = false;
