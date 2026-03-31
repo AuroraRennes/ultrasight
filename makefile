@@ -50,6 +50,7 @@ LIBCSACCUTIL:=$(CSAL_LIB)/libcsacc_util.a
 # ultrasight files
 INC:=include
 SRC:=src
+PROXY:=proxy
 
 HDRS:= \
 	$(INC)/config.h \
@@ -57,10 +58,10 @@ HDRS:= \
 	$(INC)/utils.h \
 	$(INC)/known_boards.h \
 	$(INC)/ksight.h \
-	$(INC)axi_regs.h \
-	$(INC)decoder_stats.h \
-	$(INC)edge_stats.h \
-	$(INC)bitmap_dma.h \
+	$(INC)/axi_regs.h \
+	$(INC)/decoder_stats.h \
+	$(INC)/edge_stats.h \
+	$(INC)/bitmap_dma.h \
 
 OBJS:= \
 	$(SRC)/common.o \
@@ -83,6 +84,7 @@ else
 	CFLAGS+=-Ofast
 endif
 
+# cs-trace - Standalone tracer
 CS_TRACE:=cs-trace
 CS_TRACE_FLAGS?=--export # --ksight
 CS_TRACE_OBJS:= \
@@ -92,6 +94,11 @@ CS_TRACE_OBJS:= \
 ifneq ($(strip $(DEBUG)),)
   CS_TRACE_FLAGS+=--verbose=0
 endif
+
+# fuzzsight-proxy - AFL++ fork server proxy
+FUZZSIGHT_PROXY:=$(PROXY)/fuzzsight-proxy
+FUZZSIGHT_LIB:=$(LIB)/libfuzzsight.a
+FUZZSIGHT_PROXY_OBJ:=$(PROXY)/fuzzsight-proxy.o
 
 # make trace values, setting up a new trace folder
 DATE:=$(shell date +%Y-%m-%d-%H-%M-%S)
@@ -120,8 +127,29 @@ LATEST := trace/latest.opencsd
 LIB_DIR:=lib
 LIBSTMPRELOAD:=$(LIB_DIR)/libstm_preload.so
 
+# ----------------------------------------------------------------------------
+# Build targets
+# ----------------------------------------------------------------------------
+
+all: $(CS_TRACE) $(FUZZSIGHT_LIB) $(FUZZSIGHT_PROXY)
+
 $(CS_TRACE): $(CS_TRACE_OBJS) $(LIBCSACCESS) $(LIBCSACCUTIL)
 	$(CC) -o $@ $^ $(CFLAGS)
+
+$(FUZZSIGHT_LIB): $(OBJS)
+	$(AR) rcs $@ $^
+
+# fuzzsight-proxy.c needs the AFL++ include path
+$(FUZZSIGHT_PROXY_OBJ): $(PROXY)/fuzzsight-proxy.c
+	$(CC) $(CFLAGS) -I$(AFL_INC) -c $< -o $@
+
+
+$(FUZZSIGHT_PROXY): $(FUZZSIGHT_PROXY_OBJ) $(FUZZSIGHT_LIB) $(LIBCSACCESS) $(LIBCSACCUTIL)
+	$(CC) -o $@ $^ $(CFLAGS) -lpthread
+
+# ----------------------------------------------------------------------------
+# Trace / debug helpers
+# ----------------------------------------------------------------------------
 
 trace: $(CS_TRACE) $(TESTS) disable_aslr
 	mkdir -p $(DIR) && \
@@ -151,6 +179,10 @@ $(LIBSTMPRELOAD): src/stm_preload.c
 
 $(TESTS_DIR)/%: $(TESTS_DIR)/%.c $(LIBSTMPRELOAD)
 	$(CUSTOM_CC) $(TESTS_CFLAGS) -o $@ $<
+
+# ----------------------------------------------------------------------------
+# Utilities
+# ----------------------------------------------------------------------------
 
 format:
 	clang-format -i $(INC)/*.h src/*.c

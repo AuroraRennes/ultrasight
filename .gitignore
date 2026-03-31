@@ -6,3 +6,4 @@ lib/
 trace/
 tests/*
 !tests/*.c
+proxy/fuzzsight-proxy
