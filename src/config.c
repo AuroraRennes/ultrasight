@@ -481,7 +481,7 @@ int enable_trace_sinks_only(const struct board *board, struct cs_devices_t *devi
   /* Setup TPIU to export the trace to the PL.
    * WARNING: This requires the TPIU registers to be powered (i.e. a psu_init that includes TPIU) */
   if (devices->tpiu != NULL) {
-    if (cs_sink_enable(devices->etb) != 0) {
+    if (cs_sink_enable(devices->tpiu) != 0) {
       fprintf(stderr, "[!] Failed to enable TPIU\n");
       return -1;
     }
