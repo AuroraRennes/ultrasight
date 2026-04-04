@@ -139,7 +139,7 @@ void parent(pid_t pid, int *child_status)
       if (ret < 0) perror("[!] Bitmap DMA setup issue");
 
       dec_stats_enable(&etm_handle);
-      edge_stats_reset(&edge_handle);
+      edge_stats_reset_all(&edge_handle);
 
       printf("[+] Sending CONT signal to child\n");
 
