@@ -100,6 +100,10 @@ FUZZSIGHT_PROXY:=$(PROXY)/fuzzsight-proxy
 FUZZSIGHT_LIB:=$(LIB)/libfuzzsight.a
 FUZZSIGHT_PROXY_OBJ:=$(PROXY)/fuzzsight-proxy.o
 
+# libforksrv - LD_PRELOAD fork server library
+LIBFORKSRV_DIR:=$(PROXY)/libforksrv
+LIBFORKSRV:=$(LIBFORKSRV_DIR)/libforksrv.so
+
 # make trace values, setting up a new trace folder
 DATE:=$(shell date +%Y-%m-%d-%H-%M-%S)
 DIR?=trace/$(DATE)
@@ -166,6 +170,11 @@ debug: $(CS_TRACE) $(TESTS_DUMPS) disable_aslr
 	cd $(DIR) && \
 	sudo gdb --args $(realpath $(CS_TRACE)) $(CS_TRACE_FLAGS) -- $(realpath $(TRACEE)) $(TRACEE_ARGS)
 
+proxy: $(LIBFORKSRV) $(FUZZSIGHT_PROXY)
+
+# ----------------------------------------------------------------------------
+# Libraries
+# ----------------------------------------------------------------------------
 
 libcsal:
 	$(MAKE) -C $(CSAL_BASE) $(CSAL_MAKE_FLAGS)
@@ -176,6 +185,13 @@ $(LIBCSACCUTIL): libcsal
 $(LIBSTMPRELOAD): src/stm_preload.c
 	mkdir -p lib
 	$(CC) -fPIC -shared $^ -o $@ -g -ffixed-x26
+
+$(LIBFORKSRV):
+	$(MAKE) -C $(LIBFORKSRV_DIR)
+
+# ----------------------------------------------------------------------------
+# Test programs
+# ----------------------------------------------------------------------------
 
 $(TESTS_DIR)/%: $(TESTS_DIR)/%.c $(LIBSTMPRELOAD)
 	$(CUSTOM_CC) $(TESTS_CFLAGS) -o $@ $<
@@ -198,6 +214,7 @@ disable_aslr:
 
 clean:
 	rm -f $(CS_TRACE_OBJS) $(CS_TRACE) $(TESTS) $(LIBSTMPRELOAD)
+	$(MAKE) -C $(LIBFORKSRV_DIR) clean
 
 clean-trace:
 	rm -rf trace
@@ -210,4 +227,4 @@ clean-test:
 
 clean-all: clean clean-trace clean-dist
 
-.PHONY: format libcsal clean trace
+.PHONY: format libcsal clean trace libforksrv

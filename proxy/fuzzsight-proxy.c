@@ -19,16 +19,21 @@
 
    The standard afl-proxy skeleton reads a testcase from stdin into buf[]
    and then runs the target inline.  FuzzSight's target is an external
-   binary that must be traced by the CoreSight ETM hardware. The while
-   loop boils down to:
+   binary that must be traced by the CoreSight ETM hardware.  Uses
+   libforksrv.so (LD_PRELOAD) to handle fork/freeze/unfreeze inside. The
+   while loop boils down to:
 
-     1. fork() the target binary
-     2. child: PTRACE_TRACEME + execvpe (AFL has already set up stdin / @@)
-     3. parent: catch SIGTRAP, call start_trace() with the new child PID
-     4. waitpid until the child exits
-     5. disable_trace() — flushes ETB, stops all sources/sinks
-     6. bitmap_dma_transfer() — AXI DMA reads BRAM into udmabuf
-     7. __afl_area_ptr is directly filled through DMA
+     1. Read go signal from AFL
+     2. Forward go signal to libforksrv (inner pipe)
+     3. libforksrv forks the target, child raises(SIGSTOP) before main()
+     4. libforksrv sends child PID back on inner pipe
+     5. init_trace() on first run (child is frozen, safe to read /proc/maps)
+     6. start_trace()
+     7. Forward child PID to AFL (AFL unblocks)
+     8. kill(child, SIGCONT) — child runs
+     9. Wait for exit status from libforksrv on inner pipe
+    10. stop_trace(), bitmap_dma_transfer(), memcpy to AFL shm
+    11. Forward wstatus to AFL
 
    One-time setup (before __afl_start_forkserver):
      - dec_stats_open()   AXI-Lite ETM statistics handle  - TODO: add an option to disable
@@ -59,11 +64,11 @@
 #include <string.h>
 #include <stdint.h>
 #include <errno.h>
+#include <time.h>
 
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <sys/types.h>
-#include <sys/ptrace.h>
 #include <sys/shm.h>
 #include <fcntl.h>
 
@@ -73,12 +78,35 @@
 #include "edge_stats.h"
 #include "common.h"
 
+/* Inner pipe fds used to talk to libforksrv inside the target.
+   Must match AFL_FUZZSIGHT_FORKSRV_FD in libforksrv.so. */
+#define AFL_FUZZSIGHT_FORKSRV_FD (FORKSRV_FD - 3)   /* 195 */
+
+#define AFL_FUZZSIGHT_PROXY_NAME "afl-fuzzsight-proxy"
+
+
 /* --------------------------------------------------------------------------
- * AFL++ shared map
+ * AFL++ globals
  * -------------------------------------------------------------------------- */
 
+ /* Proxy name */
+char *__afl_proxy_name = AFL_FUZZSIGHT_PROXY_NAME;
+
+/* Shared map */
 u8  *__afl_area_ptr;
 u32  __afl_map_size = MAP_SIZE;   /* 65536 — matches BRAM Write_Depth_A */
+
+/* libforksrv related */
+s32 fsrv_pid = -1;
+s32 proxy_ctl_fd = -1;
+s32 proxy_st_fd = -1;
+
+u8 first_run = 1;
+
+
+static dec_stats_t  g_etm  = {0};
+static edge_stats_t g_edge = {0};
+static bitmap_dma_t g_dma  = {0};
 
 /* --------------------------------------------------------------------------
  * Globals required by the coresight library
@@ -88,214 +116,371 @@ extern int            registration_verbose;
 extern char          *board_name;
 extern unsigned char *trace_bitmap;
 extern int            trace_bitmap_size;
+extern int            trace_cpu;
 
 /* --------------------------------------------------------------------------
  * AFL++ boilerplate
  * -------------------------------------------------------------------------- */
 
-static void __afl_start_forkserver(void) {
-
-  u32 status = 0;
-
-  if (__afl_map_size <= FS_OPT_MAX_MAPSIZE)
-    status |= (FS_OPT_SET_MAPSIZE(__afl_map_size) | FS_OPT_MAPSIZE);
-  if (status) status |= FS_OPT_ENABLED;
-
-  if (write(FORKSRV_FD + 1, &status, 4) != 4) return;
-
+void send_forkserver_error(int error)
+{
+    u32 status;
+    if (!error || error > 0xffff) return;
+    status = (FS_OPT_ERROR | FS_OPT_SET_ERROR(error));
+    if (write(FORKSRV_FD + 1, (char *)&status, 4) != 4) return;
 }
 
-static pid_t __afl_next_testcase(char **target_argv) {
 
-  u32 was_killed;
+static void __afl_map_shm(void)
+{
+    char *id_str = getenv(SHM_ENV_VAR);
+    char *ptr;
 
-  /* Wait for AFL's go signal */
-  if (read(FORKSRV_FD, &was_killed, 4) != 4) return 0;
+    if ((ptr = getenv("AFL_MAP_SIZE")) != NULL) {
+        u32 val = atoi(ptr);
+        if (val > 0) trace_bitmap_size = val;
+    }
 
-  /* Fork target  */
-  pid_t child = fork();
-  if (child < 0) {
-    perror("[!] fuzzsight-proxy: fork");
+    if (trace_bitmap_size > MAP_SIZE) {
+        if (trace_bitmap_size > FS_OPT_MAX_MAPSIZE) {
+            fprintf(stderr,
+                    "Error: %s *require* to set AFL_MAP_SIZE to %u to "
+                    "be able to run this instrumented program!\n",
+                    __afl_proxy_name, trace_bitmap_size);
+            if (id_str) {
+                send_forkserver_error(FS_ERROR_MAP_SIZE);
+                exit(-1);
+            }
+        } else {
+            fprintf(stderr,
+                    "Warning: %s will need to set AFL_MAP_SIZE to %u to "
+                    "be able to run this instrumented program!\n",
+                    __afl_proxy_name, trace_bitmap_size);
+        }
+    }
+
+    if (id_str) {
+#ifdef USEMMAP
+        const char *shm_file_path = id_str;
+        int shm_fd = shm_open(shm_file_path, O_RDWR, 0600);
+        if (shm_fd == -1) {
+            fprintf(stderr, "shm_open() failed\n");
+            send_forkserver_error(FS_ERROR_SHM_OPEN);
+            exit(1);
+        }
+        unsigned char *shm_base = mmap(0, trace_bitmap_size,
+                                        PROT_READ | PROT_WRITE,
+                                        MAP_SHARED, shm_fd, 0);
+        if (shm_base == MAP_FAILED) {
+            close(shm_fd);
+            fprintf(stderr, "mmap() failed\n");
+            send_forkserver_error(FS_ERROR_MMAP);
+            exit(2);
+        }
+        trace_bitmap = shm_base;
+#else
+        u32 shm_id = atoi(id_str);
+        trace_bitmap = shmat(shm_id, 0, 0);
+#endif
+        if (trace_bitmap == (void *)-1) {
+            send_forkserver_error(FS_ERROR_SHMAT);
+            exit(1);
+        }
+        trace_bitmap[0] = 1;
+    }
+}
+
+
+static void __afl_start_forkserver(char **target_argv) {
+
+  u8  tmp[4] = {0, 0, 0, 0};
+  u32 status = 0;
+  int st_pipe[2], ctl_pipe[2];
+
+  /* Pipes between proxy and libforksrv */
+  if (pipe(st_pipe) || pipe(ctl_pipe)) {
+    perror("[!] fuzzsight-proxy: pipe() failed");
     exit(EXIT_FAILURE);
   }
 
-  if (child == 0) {
+  fsrv_pid = fork();
+  if (fsrv_pid < 0) {
+    perror("[!] fuzzsight-proxy: fork() failed");
+    exit(EXIT_FAILURE);
+  }
+
+  if (fsrv_pid == 0) {
+    /* ---- child: become the target with libforksrv preloaded ---- */
+
+    /* Wire inner pipes to the fds libforksrv expects */
+    if (dup2(ctl_pipe[0], AFL_FUZZSIGHT_FORKSRV_FD) < 0 ||
+        dup2(st_pipe[1],  AFL_FUZZSIGHT_FORKSRV_FD + 1) < 0) {
+      perror("[!] fuzzsight-proxy child: dup2() failed");
+      exit(EXIT_FAILURE);
+    }
+
+    close(ctl_pipe[0]); close(ctl_pipe[1]);
+    close(st_pipe[0]);  close(st_pipe[1]);
+
+    /* AFL's outer fds must not leak into the target */
     close(FORKSRV_FD);
     close(FORKSRV_FD + 1);
 
-    /* CHILD: request tracing then become the target */
-    if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) < 0) {
-      perror("[!] fuzzsight-proxy child: PTRACE_TRACEME");
-      exit(EXIT_FAILURE);
+    /* Build LD_PRELOAD: optional CS_LD_PRELOAD + libforksrv.so */
+    char *libforksrv_path = getenv("FUZZSIGHT_LIBFORKSRV");
+    if (!libforksrv_path) perror("[!] fuzzsight-proxy child: coult not find libforksrv.so");
+
+    char ld_preload[4096] = "LD_PRELOAD=";
+    char *cs_ld_preload = getenv("CS_LD_PRELOAD");
+    if (cs_ld_preload) {
+      strncat(ld_preload, cs_ld_preload, sizeof(ld_preload) - strlen(ld_preload) - 2);
+      strncat(ld_preload, ":", sizeof(ld_preload) - strlen(ld_preload) - 2);
     }
-    execvpe(target_argv[0], target_argv, environ);
-    perror("[!] fuzzsight-proxy child: execvpe");
+    strncat(ld_preload, libforksrv_path, sizeof(ld_preload) - strlen(ld_preload) - 1);
+
+    char ld_lib[4096] = "LD_LIBRARY_PATH=";
+    char *cs_ld_lib = getenv("CS_LD_LIBRARY_PATH");
+    if (cs_ld_lib)
+      strncat(ld_lib, cs_ld_lib, sizeof(ld_lib) - strlen(ld_lib) - 1);
+
+    char *envp[] = { "CS_FORKSERVER=1", ld_preload, ld_lib, NULL };
+
+    execve(target_argv[0], target_argv, envp);
+    perror("[!] fuzzsight-proxy child: execve");
     exit(EXIT_FAILURE);
   }
 
-  if (write(FORKSRV_FD + 1, &child, 4) != 4) {
-    kill(child, SIGKILL);
-    waitpid(child, NULL, 0);
-    return 0;
+  /* ---- parent: finish pipe setup ---- */
+  close(ctl_pipe[0]);
+  close(st_pipe[1]);
+  proxy_ctl_fd = ctl_pipe[1];
+  proxy_st_fd  = st_pipe[0];
+
+  /* Wait for libforksrv's hello (4 bytes) */
+  if (read(proxy_st_fd, tmp, 4) != 4) {
+    perror("[!] fuzzsight-proxy: read() fialed - libforksrv did not start");
+    exit(EXIT_FAILURE);
+  }
+  memcpy(&status, tmp, 4);
+
+  /* Build our own status word for AFL */
+  if (!status) {
+    if (__afl_map_size <= FS_OPT_MAX_MAPSIZE)
+      status |= (FS_OPT_SET_MAPSIZE(__afl_map_size) | FS_OPT_MAPSIZE);
+    if (status) status |= FS_OPT_ENABLED;
+    memcpy(tmp, &status, 4);
   }
 
-  return child;
-
-}
-
-static void __afl_end_testcase(int wstatus) {
-  fprintf(stderr, "[.] writing end testcase wstatus=0x%x\n", wstatus);
-  if (write(FORKSRV_FD + 1, &wstatus, 4) != 4) {
-    fprintf(stderr, "[!] end_testcase write failed: %s\n", strerror(errno));
-    exit(1);
+  /* Tell AFL++ "forkserver is ready" */
+  if (write(FORKSRV_FD + 1, tmp, 4) != 4) {
+    perror("[!] fuzzsight-proxy: write() status to AFL failed");
+    exit(EXIT_FAILURE);
   }
-  fprintf(stderr, "[.] end testcase write done\n");
 }
-
 
 /* --------------------------------------------------------------------------
  * One fuzzing iteration
  * -------------------------------------------------------------------------- */
 
-/*
- * init_trace() reads /proc/<child>/maps to build the ETM address filter.
- */
-static u8 first_run = 1;
+static pid_t __afl_next_testcase(void) {
 
-static int run_target(pid_t child,
-                      dec_stats_t  *etm,
-                      edge_stats_t *edge,
-                      bitmap_dma_t *dma)
-{
-  int wstatus = 0;
-  int ret;
+  u32 was_killed;
+  s32 child_pid;
 
-  waitpid(child, &wstatus, 0);
+  /* Read go signal from AFL, forward to libforksrv */
+  if (read(FORKSRV_FD, &was_killed, 4) != 4) return -1;
+  if (write(proxy_ctl_fd, &was_killed, 4) != 4) return -1;
 
-  if (!WIFSTOPPED(wstatus) || WSTOPSIG(wstatus) != SIGTRAP) {
-    fprintf(stderr, "[!] fuzzsight-proxy: unexpected child state 0x%x "
-            "(WIFSTOPPED=%d WSTOPSIG=%d WIFEXITED=%d WEXITSTATUS=%d)\n",
-            wstatus, WIFSTOPPED(wstatus), WSTOPSIG(wstatus),
-            WIFEXITED(wstatus), WEXITSTATUS(wstatus));
-    kill(child, SIGKILL);
-    waitpid(child, NULL, 0);
-    /* Still return a valid-looking exit status so AFL++ doesn't lose the pipe */
-    return (1 << 8); /* fake WEXITSTATUS=1 */
-  }
+  /* libforksrv forks + child raises SIGSTOP before main(), sends us PID */
+  if (read(proxy_st_fd, &child_pid, 4) != 4) return -1;
 
+  /* One-time board registration + ETM address filter */
   if (first_run) {
-    ret = init_trace(getpid(), child);
-    if (ret < 0) {
-      fprintf(stderr, "[!] fuzzsight-proxy: init_trace failed (%d)\n", ret);
-      kill(child, SIGKILL);
-      waitpid(child, NULL, 0);
-      return (1 << 8);
+    trace_cpu = 0;
+    if (init_trace(fsrv_pid, child_pid) < 0) {
+      fprintf(stderr, "[!] fuzzsight-proxy: init_trace failed\n");
+      kill(child_pid, SIGKILL);
+      return -1;
     }
     first_run = 0;
   }
 
-  ret = start_trace(child, true);
-  if (ret < 0) {
-    fprintf(stderr, "[!] fuzzsight-proxy: start_trace failed (%d)\n", ret);
-    kill(child, SIGKILL);
-    waitpid(child, NULL, 0);
-    return (1 << 8);
+  /* Start CoreSight — child still frozen, safe */
+  if (start_trace(child_pid, false) < 0) {
+    fprintf(stderr, "[!] fuzzsight-proxy: start_trace failed\n");
+    kill(child_pid, SIGKILL);
+    return -1;
   }
 
-  dec_stats_enable(etm);
-  edge_stats_reset(edge);
+  dec_stats_enable(&g_etm);
+  edge_stats_reset_all(&g_edge);
 
-  fprintf(stderr, "[.] detaching child %d\n", child);
-  int detach_ret = ptrace(PTRACE_DETACH, child, NULL, NULL);
-  fprintf(stderr, "[.] PTRACE_DETACH returned %d errno=%s\n", detach_ret, strerror(errno));
+  /* Tell AFL the PID — AFL unblocks */
+  if (write(FORKSRV_FD + 1, &child_pid, 4) != 4) return -1;
 
-  /* Wait for child to finish */
-  fprintf(stderr, "[.] entering wait loop\n");
-  do {
-    ret = waitpid(child, &wstatus, WUNTRACED | WCONTINUED);
-    fprintf(stderr, "[.] waitpid returned %d wstatus=0x%x WIFEXITED=%d WIFSIGNALED=%d WIFSTOPPED=%d\n",
-            ret, wstatus, WIFEXITED(wstatus), WIFSIGNALED(wstatus), WIFSTOPPED(wstatus));
-    if (ret < 0) {
-      perror("[!] fuzzsight-proxy: waitpid");
+  /* Release child */
+  kill(child_pid, SIGCONT);
+
+  return child_pid;
+}
+
+
+static int __afl_end_testcase(void) {
+  int wstatus;
+  struct timespec t1, t2;
+  /* Wait for exit status from libforksrv */
+  while (1) {
+    if (read(proxy_st_fd, &wstatus, 4) != 4) return -1;
+    if (WIFCONTINUED(wstatus) || (WIFSTOPPED(wstatus) && WSTOPSIG(wstatus) == SIGSTOP)) {
+      continue;
+    } else {
       break;
     }
-  } while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
-  fprintf(stderr, "[.] wait loop done\n");
-  ret = stop_trace(true);
-  if (ret < 0)
-    fprintf(stderr, "[!] fuzzsight-proxy: stop_trace failed (%d)\n", ret);
+  }
 
-  dec_stats_disable(etm);
+  // clock_gettime(CLOCK_MONOTONIC, &t1);
+  stop_trace(false);
+  // clock_gettime(CLOCK_MONOTONIC, &t2);
+  // fprintf(stderr, "[.] stop_trace took %.3f us\n",
+  //   (t2.tv_sec-t1.tv_sec) * 1e6 + (t2.tv_nsec-t1.tv_nsec)/1e3);
 
-  ret = bitmap_dma_transfer(dma);
-  if (ret < 0)
+  dec_stats_disable(&g_etm);
+  // edge_stats_print(&g_edge);
+
+  fprintf(stderr, "before dma!\n");
+  clock_gettime(CLOCK_MONOTONIC, &t1);
+  if (bitmap_dma_transfer(&g_dma) < 0)
     fprintf(stderr, "[!] fuzzsight-proxy: bitmap_dma_transfer failed\n");
+  clock_gettime(CLOCK_MONOTONIC, &t2);
+  fprintf(stderr, "[.] dma_transfer took %.3f us\n",
+    (t2.tv_sec-t1.tv_sec) * 1e6 + (t2.tv_nsec-t1.tv_nsec)/1e3);
 
-  return wstatus;
+  memcpy(__afl_area_ptr, g_dma.buf, MAP_SIZE);
+
+  static unsigned char ref_bitmap[MAP_SIZE] = {0};
+  static int ref_bitmap_set = 0;
+
+  unsigned char *bitmap = (unsigned char *)g_dma.buf;
+
+  /* Comparing bitmaps */
+  // int nonzero = 0;
+  // for (int i = 0; i < MAP_SIZE; i++) {
+  //     if (bitmap[i] != 0) {
+  //         fprintf(stderr, "[.] nonzero at [%d]: %02x\n", i, bitmap[i]);
+  //         nonzero = 1;
+  //     }
+  // }
+  // if (nonzero == 0)
+  //     fprintf(stderr, "[.] bitmap is ALL ZEROS\n");
+
+  // if (!ref_bitmap_set) {
+  //     memcpy(ref_bitmap, bitmap, MAP_SIZE);
+  //     ref_bitmap_set = 1;
+  //     fprintf(stderr, "[.] reference bitmap stored\n");
+  // } else {
+  //     int diffs = 0;
+  //     for (int i = 0; i < MAP_SIZE; i++) {
+  //         if (ref_bitmap[i] != bitmap[i]) {
+  //             fprintf(stderr, "[.] bitmap diff at [%d]: ref=%02x cur=%02x\n",
+  //                     i, ref_bitmap[i], bitmap[i]);
+  //             if (++diffs >= 16) {
+  //                 fprintf(stderr, "[.] ... (truncated)\n");
+  //                 break;
+  //             }
+  //         }
+  //     }
+  //     if (diffs == 0)
+  //         fprintf(stderr, "[.] bitmap identical to reference\n");
+  // }
+
+  /* Report exit status to AFL */
+  if (write(FORKSRV_FD + 1, &wstatus, 4) != 4) return -1;
+
+  return 0;
 }
 
 /* --------------------------------------------------------------------------
  * main
  * -------------------------------------------------------------------------- */
 
-int main(int argc, char *argv[]) {
+ int main(int argc, char *argv[]) {
 
-  // FIXME: Putting errors somewhere
   int logfd = open("/tmp/fuzzsight.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
   if (logfd >= 0) { dup2(logfd, STDERR_FILENO); close(logfd); }
 
+  setbuf(stderr, NULL);
+  setbuf(stdout, NULL);
 
   if (argc < 2) {
-    fprintf(stderr, "Usage: %s TARGET [ARGS]\n", argv[0]);
+    fprintf(stderr, "Usage: %s -- TARGET [ARGS]\n", argv[0]);
     exit(EXIT_FAILURE);
   }
 
-  char **target_argv = &argv[1];
+  if (geteuid() != 0) {
+    fprintf(stderr, "Error: root is required (CoreSight needs /dev/mem)\n");
+    return -1;
+  }
+
+    /* ---- Initialize ---- */
+  registration_verbose = 0;
+
+  /* Find -- separator */
+  char **target_argv = NULL;
+  for (int i = 1; i < argc; i++) {
+    if (!strcmp(argv[i], "--") && i + 1 < argc) {
+      target_argv = &argv[i + 1];
+      break;
+    }
+  }
+  if (!target_argv) {
+    fprintf(stderr, "Usage: %s -- TARGET [ARGS]\n", argv[0]);
+    exit(EXIT_FAILURE);
+  }
 
   if (access(target_argv[0], F_OK | X_OK) != 0) {
     perror("[!] fuzzsight-proxy: target not found or not executable");
     exit(EXIT_FAILURE);
   }
 
-  dec_stats_t  etm  = {0};
-  edge_stats_t edge = {0};
-  bitmap_dma_t dma  = {0};
-
-  if (dec_stats_open(&etm) < 0)
+  if (dec_stats_open(&g_etm) < 0)
     perror("[!] fuzzsight-proxy: dec_stats_open");
-  if (edge_stats_open(&edge) < 0)
+  if (edge_stats_open(&g_edge) < 0)
     perror("[!] fuzzsight-proxy: edge_stats_open");
-  if (bitmap_dma_open(&dma, MAP_SIZE) < 0) {
+  if (bitmap_dma_open(&g_dma, MAP_SIZE) < 0) {
     perror("[!] fuzzsight-proxy: bitmap_dma_open");
     exit(EXIT_FAILURE);
   }
 
-  /*
-   * Point __afl_area_ptr directly at the udmabuf mmap'd VA.
-   * bitmap_dma_open() has already mmap'd the udmabuf region at dma.buf
-   * and configured the AXI DMA S2MM destination to its physical address.
-   */
-  __afl_area_ptr = dma.buf;
-  trace_bitmap   = dma.buf;
-  /* Tell AFL++ the map is live */
+  setenv("__AFLCS_ENABLE", "1", 0);
+
+  /* Map shared memory */
+  __afl_map_shm();
+  /* Point __afl_area_ptr at the same SHM as trace_bitmap */
+  if (trace_bitmap) {
+      __afl_area_ptr = trace_bitmap;
+  } else {
+      /* No SHM (running outside AFL) — allocate a dummy buffer */
+      __afl_area_ptr = calloc(MAP_SIZE, 1);
+  }
   __afl_area_ptr[0] = 1;
 
+  /* trace_bitmap = DMA buffer (what hardware writes to) */
+  trace_bitmap = g_dma.buf;
+
   /* AFL++ protocol init */
-  __afl_start_forkserver();
+  __afl_start_forkserver(target_argv);
 
   /* Main fuzzing loop */
   pid_t child;
-  while ((child = __afl_next_testcase(target_argv)) > 0) {
-
-    int wstatus = run_target(child, &etm, &edge, &dma);
-    __afl_end_testcase(wstatus);
-
+  while ((child = __afl_next_testcase()) > 0) {
+    if (__afl_end_testcase() < 0) break;
   }
 
   /* Teardown */
   fini_trace();
-  dec_stats_close(&etm);
-  edge_stats_close(&edge);
+  dec_stats_close(&g_etm);
+  edge_stats_close(&g_edge);
+  bitmap_dma_close(&g_dma);
 
   return 0;
 

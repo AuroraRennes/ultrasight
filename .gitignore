@@ -1,5 +1,6 @@
 .clangd
 *.o
+*.so
 cs-trace
 cstrace.bin
 lib/
