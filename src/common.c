@@ -169,7 +169,7 @@ static void set_trace_state(trace_state_t new_state)
   pthread_mutex_lock(&trace_state_mutex);
   old_state = trace_state;
   trace_state = new_state;
-  printf("[+] Trace state transition: %d -> %d\n", old_state, new_state);
+  // printf("[+] Trace state transition: %d -> %d\n", old_state, new_state);
   /** Follow the following finite state machine
    *      From       |       To        |  Signals
    * ----------------|-----------------|---------------
@@ -222,12 +222,12 @@ static int trace_sink_polling(unsigned long fetch_threshold) {
     /* Current read write position, extracted from the device register */
     curr_offset = cs_get_buffer_rwp(devices.etb) - init_pos;
 
-    printf("[+] - Fetcher: Waiting for threshold (0x%lx)\n", fetch_threshold);
-    printf("[~] INITPOS: 0x%lx\n", init_pos);
-    printf("[~] CURROFF: 0x%lx\n", curr_offset);
+    // printf("[+] - Fetcher: Waiting for threshold (0x%lx)\n", fetch_threshold);
+    // printf("[~] INITPOS: 0x%lx\n", init_pos);
+    // printf("[~] CURROFF: 0x%lx\n", curr_offset);
     if (curr_offset > fetch_threshold) {
 
-      printf("[+] - Fetcher: threshold reached, stopping child\n");
+      // printf("[+] - Fetcher: threshold reached, stopping child\n");
       /* Suspend the child process */
       ret = kill(child_pid, SIGSTOP);
       if (ret < 0) {
@@ -243,21 +243,21 @@ static int trace_sink_polling(unsigned long fetch_threshold) {
       wait_trace_event(suspend_event);
 
       /* Disable the trace before fetching */
-      printf("[+] - Fetcher: disabling trace collection\n");
+      // printf("[+] - Fetcher: disabling trace collection\n");
       if ((ret = disable_cs_trace(false) < 0)) {
         fprintf(stderr, "disable_cs_trace() failed\n");
         goto exit;
       }
 
       /* Fetch the trace from the buffer in memory */
-      printf("[+] - Fetcher: fetching trace data\n");
+      // printf("[+] - Fetcher: fetching trace data\n");
       ret = fetch_trace();
       if (ret < 0) {
           fprintf(stderr, "[!] fetch_trace() failed\n");
           goto exit;
       }
 
-      printf("[+] - Fetcher: relaunching trace collection\n");
+      // printf("[+] - Fetcher: relaunching trace collection\n");
       ret = enable_cs_trace(child_pid);
       if (ret < 0) {
         fprintf(stderr, "enable_cs_trace() failed\n");
@@ -265,7 +265,7 @@ static int trace_sink_polling(unsigned long fetch_threshold) {
       }
 
       /* Send a continue to the child */
-      printf("[+] - Fetcher: resuming child\n");
+      // printf("[+] - Fetcher: resuming child\n");
       ret = kill(child_pid, SIGCONT);
       if (ret < 0) {
         if (errno == ESRCH) {
@@ -276,7 +276,7 @@ static int trace_sink_polling(unsigned long fetch_threshold) {
       }
 
       /* Wait for a suspending trace */
-      printf("[+] - Fetcher: Waiting for resume event\n");
+      // printf("[+] - Fetcher: Waiting for resume event\n");
       wait_trace_event(resume_event);
 
       // Reset init_pos to current buffer position after fetch
@@ -289,13 +289,13 @@ static int trace_sink_polling(unsigned long fetch_threshold) {
 
 killed:
   pthread_mutex_lock(&trace_event_mutex);
-  printf("[+] - Fetcher: Child killed, waiting before last fetch\n");
+  // printf("[+] - Fetcher: Child killed, waiting before last fetch\n");
   while (trace_event != stop_event && trace_event != fini_event) {
     pthread_cond_wait(&trace_event_cond, &trace_event_mutex);
   }
   pthread_mutex_unlock(&trace_event_mutex);
 
-  printf("[+] - Fetcher: Last fetch\n");
+  // printf("[+] - Fetcher: Last fetch\n");
   ret = fetch_trace();
   if (ret < 0) {
       fprintf(stderr, "[!] fetch_trace() failed\n");
@@ -525,7 +525,7 @@ static int enable_cs_trace(pid_t pid)
     is_first_trace = false;
   } else {
     /* Enable trace sinks only once the ETMs enabled */
-    printf("[+] Enabling sinks only\n");
+    // printf("[+] Enabling sinks only\n");
     if (enable_trace_sinks_only(board, &devices) < 0) {
       fprintf(stderr, "[!] enable_trace_sinks_only() failed\n");
       goto exit;
@@ -570,13 +570,13 @@ static int disable_cs_trace(bool disable_all)
         fprintf(stderr, "[!] Try %d: disable_trace() failed\n", disable_trial);
       }
     } else {
-      printf("[+] Disabling sinks only\n");
+      // printf("[+] Disabling sinks only\n");
       if ((ret = disable_trace_sinks_only(&devices)) < 0) {
         fprintf(stderr, "[!] Try %d disable_trace_sinks_only() failed\n", disable_trial);
       }
 
-    printf("[~] disable: return error %d\n", ret);}
-
+    // printf("[~] disable: return error %d\n", ret);}
+    }
     /* If there is no error, break out of the trial loop */
     if (!(ret < 0)) {
       break;
@@ -837,7 +837,7 @@ exit:
 int stop_trace(bool disable_all)
 {
   int ret;
-
+  // printf("[+] Stopping trace\n");
   /* Disable all components */
   if ((ret = disable_cs_trace(disable_all)) < 0) {
     fprintf(stderr, "[!] Could not disable trace\n");
@@ -886,7 +886,7 @@ int init_trace(pid_t parent_pid, pid_t pid)
 
   /* Get udmabuf information (address and size), storing them in their
    * respective variables */
-  printf("[+] Getting u-dma-buf info\n");
+  // printf("[+] Getting u-dma-buf info\n");
   if (get_udmabuf_info(udmabuf_num, &etr_ram_addr, &etr_ram_size) < 0) {
     fprintf(stderr, "[!] Failed to get u-dma-buf info\n");
     goto exit;
@@ -894,7 +894,7 @@ int init_trace(pid_t parent_pid, pid_t pid)
 
   /* Get ksight address information */
   if (ksight_on) {
-    printf("[+] Getting ksight info\n");
+    // printf("[+] Getting ksight info\n");
     if (get_ksight_info(&ksight_ram_addr) < 0) {
       fprintf(stderr, "[!] Failed to get ksight info\n");
       goto exit;
@@ -902,14 +902,14 @@ int init_trace(pid_t parent_pid, pid_t pid)
   }
 
   /* Extract and store memory mapping information */
-  printf("[+] Getting map info\n");
+  // printf("[+] Getting map info\n");
   if ((range_count = setup_map_info(pid, map_info, RANGE_MAX)) < 0) {
     fprintf(stderr, "[!] setup_map_info() failed\n");
     goto exit;
   }
 
   /* Setup board variables for a given board defined in known_board.h */
-  printf("[+] Setting up board\n");
+  // printf("[+] Setting up board\n");
   if (setup_named_board(board_name, &board, &devices, known_boards) < 0) {
     fprintf(stderr, "[!] setup_named_board() failed\n");
     goto exit;
@@ -934,7 +934,7 @@ int init_trace(pid_t parent_pid, pid_t pid)
       fprintf(stderr, "[!] pthread_create() failed for the Fetcher: %d\n", ret);
       goto exit;
     }
-    printf("[+] fetcher thread created\n");
+    // printf("[+] fetcher thread created\n");
   }
 
   /* Get the trace ID */
@@ -965,11 +965,11 @@ void fini_trace(void)
     set_trace_state(fini_state);
     pthread_join(fetcher_thread, NULL);
   } else {
-    // fetch_trace();
+    fetch_trace();
   }
 
   /* Export the trace to a file */
-  // export_trace(DEFAULT_TRACE_NAME);
+  export_trace(DEFAULT_TRACE_NAME);
 
   /* Export the ksight trace events to a file */
   if (ksight_on) {
@@ -1008,4 +1008,10 @@ void fini_trace(void)
   pthread_mutex_destroy(&trace_event_mutex);
   pthread_mutex_destroy(&trace_state_mutex);
   pthread_mutex_destroy(&trace_mutex);
+}
+
+void reset_trace_state(void)/* SHI NEW: reset for repeated init_trace() */
+{
+    trace_state = init_state;
+    is_first_trace = true;   /* reset so next enable_cs_trace does full config */
 }

@@ -349,7 +349,7 @@ int enable_trace(const struct board *board, struct cs_devices_t *devices)
       fprintf(stderr, "[!] Failed to setup TPIU\n");
     return -1;
     }
-    printf("[+] TPIU enabled!\n");
+    // printf("[+] TPIU enabled!\n");
   }
 
   /* Setup and enable ETFs as HW FIFO sinks in the system (there are two on the
@@ -440,7 +440,7 @@ int disable_trace(const struct board *board, struct cs_devices_t *devices)
       fprintf(stderr, "[!] Failed to disable TPIU\n");
       return -1;
     }
-    printf("[+] TPIU disabled!\n");
+    // printf("[+] TPIU disabled!\n");
   }
 
   /* If needed, show the ETM config */
@@ -473,6 +473,11 @@ int enable_trace_sinks_only(const struct board *board, struct cs_devices_t *devi
   }
 
     /* Setup and enable ETR as the main sink and trace buffer */
+  if (cs_sink_etr_setup(devices->etb, etr_ram_addr, etr_ram_size,
+                      board->etr_axictl) != 0) {
+    fprintf(stderr, "[!] Failed to setup ETR\n");
+    return -1;
+  }
   if (cs_sink_enable(devices->etb) != 0) {
     fprintf(stderr, "[!] Failed to enable ETR\n");
     return -1;
@@ -481,7 +486,7 @@ int enable_trace_sinks_only(const struct board *board, struct cs_devices_t *devi
   /* Setup TPIU to export the trace to the PL.
    * WARNING: This requires the TPIU registers to be powered (i.e. a psu_init that includes TPIU) */
   if (devices->tpiu != NULL) {
-    if (cs_sink_enable(devices->etb) != 0) {
+    if (cs_sink_enable(devices->tpiu) != 0) {
       fprintf(stderr, "[!] Failed to enable TPIU\n");
       return -1;
     }
@@ -539,13 +544,18 @@ int disable_trace_sinks_only(struct cs_devices_t *devices)
       fprintf(stderr, "[!] Failed to disable TPIU\n");
       return -1;
     }
-    printf("[+] TPIU disabled!\n");
+    // printf("[+] TPIU disabled!\n");
   }
 
   /* Disable intermediate sinks (ETFs) */
+  // for (i = 0; i < devices->num_trace_sinks; i++) {
+  //   if (devices->trace_sinks[i]) {
+  //     cs_sink_disable(devices->trace_sinks[i]);
+  //   }
+  // }
   for (i = 0; i < devices->num_trace_sinks; i++) {
     if (devices->trace_sinks[i]) {
-      cs_sink_disable(devices->trace_sinks[i]);
+        cs_tmc_hw_fifo_disable(devices->trace_sinks[i]);
     }
   }
   /* Disable the main sink (ETR) */
