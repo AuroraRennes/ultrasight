@@ -103,7 +103,6 @@ s32 proxy_st_fd = -1;
 
 u8 first_run = 1;
 
-
 static dec_stats_t  g_etm  = {0};
 static edge_stats_t g_edge = {0};
 static bitmap_dma_t g_dma  = {0};
@@ -228,7 +227,10 @@ static void __afl_start_forkserver(char **target_argv) {
 
     /* Build LD_PRELOAD: optional CS_LD_PRELOAD + libforksrv.so */
     char *libforksrv_path = getenv("FUZZSIGHT_LIBFORKSRV");
-    if (!libforksrv_path) perror("[!] fuzzsight-proxy child: coult not find libforksrv.so");
+    if (!libforksrv_path) {
+      perror("[!] fuzzsight-proxy child: could not find libforksrv.so");
+      exit(EXIT_FAILURE);
+    }
 
     char ld_preload[4096] = "LD_PRELOAD=";
     char *cs_ld_preload = getenv("CS_LD_PRELOAD");
@@ -246,7 +248,7 @@ static void __afl_start_forkserver(char **target_argv) {
     char *envp[] = { "CS_FORKSERVER=1", ld_preload, ld_lib, NULL };
 
     execve(target_argv[0], target_argv, envp);
-    perror("[!] fuzzsight-proxy child: execve");
+    perror("[!] fuzzsight-proxy child: execve failed");
     exit(EXIT_FAILURE);
   }
 
@@ -258,7 +260,7 @@ static void __afl_start_forkserver(char **target_argv) {
 
   /* Wait for libforksrv's hello (4 bytes) */
   if (read(proxy_st_fd, tmp, 4) != 4) {
-    perror("[!] fuzzsight-proxy: read() fialed - libforksrv did not start");
+    perror("[!] fuzzsight-proxy: read() failed - libforksrv did not start");
     exit(EXIT_FAILURE);
   }
   memcpy(&status, tmp, 4);
@@ -313,7 +315,7 @@ static pid_t __afl_next_testcase(void) {
   }
 
   dec_stats_enable(&g_etm);
-  edge_stats_reset_all(&g_edge);
+  edge_stats_reset(&g_edge);
 
   /* Tell AFL the PID — AFL unblocks */
   if (write(FORKSRV_FD + 1, &child_pid, 4) != 4) return -1;
@@ -347,13 +349,13 @@ static int __afl_end_testcase(void) {
   dec_stats_disable(&g_etm);
   // edge_stats_print(&g_edge);
 
-  fprintf(stderr, "before dma!\n");
-  clock_gettime(CLOCK_MONOTONIC, &t1);
+  // fprintf(stderr, "before dma!\n");
+  // clock_gettime(CLOCK_MONOTONIC, &t1);
   if (bitmap_dma_transfer(&g_dma) < 0)
     fprintf(stderr, "[!] fuzzsight-proxy: bitmap_dma_transfer failed\n");
-  clock_gettime(CLOCK_MONOTONIC, &t2);
-  fprintf(stderr, "[.] dma_transfer took %.3f us\n",
-    (t2.tv_sec-t1.tv_sec) * 1e6 + (t2.tv_nsec-t1.tv_nsec)/1e3);
+  // clock_gettime(CLOCK_MONOTONIC, &t2);
+  // fprintf(stderr, "[.] dma_transfer took %.3f us\n",
+    // (t2.tv_sec-t1.tv_sec) * 1e6 + (t2.tv_nsec-t1.tv_nsec)/1e3);
 
   memcpy(__afl_area_ptr, g_dma.buf, MAP_SIZE);
 
@@ -363,35 +365,34 @@ static int __afl_end_testcase(void) {
   unsigned char *bitmap = (unsigned char *)g_dma.buf;
 
   /* Comparing bitmaps */
-  // int nonzero = 0;
-  // for (int i = 0; i < MAP_SIZE; i++) {
-  //     if (bitmap[i] != 0) {
-  //         fprintf(stderr, "[.] nonzero at [%d]: %02x\n", i, bitmap[i]);
-  //         nonzero = 1;
-  //     }
-  // }
-  // if (nonzero == 0)
-  //     fprintf(stderr, "[.] bitmap is ALL ZEROS\n");
+  int nonzero = 0;
+  for (int i = 0; i < MAP_SIZE; i++) {
+      if (bitmap[i] != 0) {
+          fprintf(stderr, "[.] nonzero at [0x%x]: %02x\n", i, bitmap[i]);
+          nonzero = 1;
+      }
+  }
+  if (nonzero == 0)
+      fprintf(stderr, "[.] bitmap is ALL ZEROS\n");
 
-  // if (!ref_bitmap_set) {
-  //     memcpy(ref_bitmap, bitmap, MAP_SIZE);
-  //     ref_bitmap_set = 1;
-  //     fprintf(stderr, "[.] reference bitmap stored\n");
-  // } else {
-  //     int diffs = 0;
-  //     for (int i = 0; i < MAP_SIZE; i++) {
-  //         if (ref_bitmap[i] != bitmap[i]) {
-  //             fprintf(stderr, "[.] bitmap diff at [%d]: ref=%02x cur=%02x\n",
-  //                     i, ref_bitmap[i], bitmap[i]);
-  //             if (++diffs >= 16) {
-  //                 fprintf(stderr, "[.] ... (truncated)\n");
-  //                 break;
-  //             }
-  //         }
-  //     }
-  //     if (diffs == 0)
-  //         fprintf(stderr, "[.] bitmap identical to reference\n");
-  // }
+  if (!ref_bitmap_set) {
+      memcpy(ref_bitmap, bitmap, MAP_SIZE);
+      ref_bitmap_set = 1;
+      fprintf(stderr, "[.] reference bitmap stored\n");
+  } else {
+      int diffs = 0;
+      for (int i = 0; i < MAP_SIZE; i++) {
+          if (ref_bitmap[i] != bitmap[i]) {
+              fprintf(stderr, "[.] bitmap diff at [0x%x]: ref=%02x cur=%02x\n",
+                      i, ref_bitmap[i], bitmap[i]);
+              diffs = diffs + 1;
+          }
+      }
+      if (diffs == 0)
+          fprintf(stderr, "[.] bitmap identical to reference\n");
+  }
+
+  edge_stats_print(&g_edge);
 
   /* Report exit status to AFL */
   if (write(FORKSRV_FD + 1, &wstatus, 4) != 4) return -1;

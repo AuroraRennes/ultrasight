@@ -5,6 +5,10 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+
+# Displays the bitmap obtained with:
+# sudo dd if=/dev/tpiu-doctor0 of=bitmap.bin bs=65536 count=1
+
 def visualize_bitmap(path, width=256):
     with open(path, 'rb') as f:
         data = f.read(65536)
