@@ -43,7 +43,7 @@ else
 endif
 CSAL_INC:=$(CSAL_BASE)/include
 CSAL_LIB:=$(CSAL_BASE)/lib/$(CSAL_ARCH)/$(CSAL_BUILD)
-CSAL_MAKE_FLAGS:=ARCH=$(CSAL_ARCH) DIAG=1 CHECK=1
+CSAL_MAKE_FLAGS:=ARCH=$(CSAL_ARCH) NO_DIAG=1 CHECK=1
 LIBCSACCESS:=$(CSAL_LIB)/libcsaccess.a
 LIBCSACCUTIL:=$(CSAL_LIB)/libcsacc_util.a
 
@@ -121,7 +121,8 @@ TESTS_CFLAGS+= \
 	-std=c11 \
 	-Wall \
 	-O0 \
-	-g
+	-g \
+	-Wl,-z,relro,-z,now
 
 # Decoder from the OpenCSD test examples
 DECODER := trc_pkt_lister
@@ -186,7 +187,9 @@ $(LIBSTMPRELOAD): src/stm_preload.c
 	mkdir -p lib
 	$(CC) -fPIC -shared $^ -o $@ -g -ffixed-x26
 
-$(LIBFORKSRV):
+libforksrv: $(LIBFORKSRV)
+
+$(LIBFORKSRV): $(LIBFORKSRV_DIR)/libforksrv.c
 	$(MAKE) -C $(LIBFORKSRV_DIR)
 
 # ----------------------------------------------------------------------------

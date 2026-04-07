@@ -327,72 +327,80 @@ static pid_t __afl_next_testcase(void) {
 }
 
 
-static int __afl_end_testcase(void) {
+static int __afl_end_testcase(pid_t child_pid) {
   int wstatus;
   struct timespec t1, t2;
+
   /* Wait for exit status from libforksrv */
-  while (1) {
-    if (read(proxy_st_fd, &wstatus, 4) != 4) return -1;
-    if (WIFCONTINUED(wstatus) || (WIFSTOPPED(wstatus) && WSTOPSIG(wstatus) == SIGSTOP)) {
-      continue;
-    } else {
+    while (1) {
+      if (read(proxy_st_fd, &wstatus, 4) != 4) return -1;
+
+      if (WIFSTOPPED(wstatus) && WSTOPSIG(wstatus) == SIGSTOP) {
+          /* Could be the post-main freeze or a spurious SIGSTOP */
+          // clock_gettime(CLOCK_MONOTONIC, &t1);
+          stop_trace(false);
+          // clock_gettime(CLOCK_MONOTONIC, &t2);
+          // fprintf(stderr, "[.] stop_trace took %.3f us\n",
+          //   (t2.tv_sec-t1.tv_sec) * 1e6 + (t2.tv_nsec-t1.tv_nsec)/1e3);
+
+          dec_stats_disable(&g_etm);
+
+          // clock_gettime(CLOCK_MONOTONIC, &t1);
+          if (bitmap_dma_transfer(&g_dma) < 0)
+              fprintf(stderr, "[!] fuzzsight-proxy: bitmap_dma_transfer failed\n");
+          // clock_gettime(CLOCK_MONOTONIC, &t2);
+          // fprintf(stderr, "[.] dma_transfer took %.3f us\n",
+          // (t2.tv_sec-t1.tv_sec) * 1e6 + (t2.tv_nsec-t1.tv_nsec)/1e3);
+
+          memcpy(__afl_area_ptr, g_dma.buf, MAP_SIZE);
+
+          /* Release child to let libc teardown complete */
+          kill(child_pid, SIGCONT);
+          continue;
+      }
+
+      if (WIFCONTINUED(wstatus)) {
+          continue;
+      }
+
+      /* Child exited — report to AFL */
       break;
-    }
   }
 
-  // clock_gettime(CLOCK_MONOTONIC, &t1);
-  stop_trace(false);
-  // clock_gettime(CLOCK_MONOTONIC, &t2);
-  // fprintf(stderr, "[.] stop_trace took %.3f us\n",
-  //   (t2.tv_sec-t1.tv_sec) * 1e6 + (t2.tv_nsec-t1.tv_nsec)/1e3);
+  // static unsigned char ref_bitmap[MAP_SIZE] = {0};
+  // static int ref_bitmap_set = 0;
 
-  dec_stats_disable(&g_etm);
+  // unsigned char *bitmap = (unsigned char *)g_dma.buf;
+
+  // /* Comparing bitmaps */
+  // int nonzero = 0;
+  // for (int i = 0; i < MAP_SIZE; i++) {
+  //     if (bitmap[i] != 0) {
+  //         fprintf(stderr, "[.] nonzero at [0x%x]: %02x\n", i, bitmap[i]);
+  //         nonzero = 1;
+  //     }
+  // }
+  // if (nonzero == 0)
+  //     fprintf(stderr, "[.] bitmap is ALL ZEROS\n");
+
+  // if (!ref_bitmap_set) {
+  //     memcpy(ref_bitmap, bitmap, MAP_SIZE);
+  //     ref_bitmap_set = 1;
+  //     fprintf(stderr, "[.] reference bitmap stored\n");
+  // } else {
+  //     int diffs = 0;
+  //     for (int i = 0; i < MAP_SIZE; i++) {
+  //         if (ref_bitmap[i] != bitmap[i]) {
+  //             fprintf(stderr, "[.] bitmap diff at [0x%x]: ref=%02x cur=%02x\n",
+  //                     i, ref_bitmap[i], bitmap[i]);
+  //             diffs = diffs + 1;
+  //         }
+  //     }
+  //     if (diffs == 0)
+  //         fprintf(stderr, "[.] bitmap identical to reference\n");
+  // }
+
   // edge_stats_print(&g_edge);
-
-  // fprintf(stderr, "before dma!\n");
-  // clock_gettime(CLOCK_MONOTONIC, &t1);
-  if (bitmap_dma_transfer(&g_dma) < 0)
-    fprintf(stderr, "[!] fuzzsight-proxy: bitmap_dma_transfer failed\n");
-  // clock_gettime(CLOCK_MONOTONIC, &t2);
-  // fprintf(stderr, "[.] dma_transfer took %.3f us\n",
-    // (t2.tv_sec-t1.tv_sec) * 1e6 + (t2.tv_nsec-t1.tv_nsec)/1e3);
-
-  memcpy(__afl_area_ptr, g_dma.buf, MAP_SIZE);
-
-  static unsigned char ref_bitmap[MAP_SIZE] = {0};
-  static int ref_bitmap_set = 0;
-
-  unsigned char *bitmap = (unsigned char *)g_dma.buf;
-
-  /* Comparing bitmaps */
-  int nonzero = 0;
-  for (int i = 0; i < MAP_SIZE; i++) {
-      if (bitmap[i] != 0) {
-          fprintf(stderr, "[.] nonzero at [0x%x]: %02x\n", i, bitmap[i]);
-          nonzero = 1;
-      }
-  }
-  if (nonzero == 0)
-      fprintf(stderr, "[.] bitmap is ALL ZEROS\n");
-
-  if (!ref_bitmap_set) {
-      memcpy(ref_bitmap, bitmap, MAP_SIZE);
-      ref_bitmap_set = 1;
-      fprintf(stderr, "[.] reference bitmap stored\n");
-  } else {
-      int diffs = 0;
-      for (int i = 0; i < MAP_SIZE; i++) {
-          if (ref_bitmap[i] != bitmap[i]) {
-              fprintf(stderr, "[.] bitmap diff at [0x%x]: ref=%02x cur=%02x\n",
-                      i, ref_bitmap[i], bitmap[i]);
-              diffs = diffs + 1;
-          }
-      }
-      if (diffs == 0)
-          fprintf(stderr, "[.] bitmap identical to reference\n");
-  }
-
-  edge_stats_print(&g_edge);
 
   /* Report exit status to AFL */
   if (write(FORKSRV_FD + 1, &wstatus, 4) != 4) return -1;
@@ -406,8 +414,8 @@ static int __afl_end_testcase(void) {
 
  int main(int argc, char *argv[]) {
 
-  int logfd = open("/tmp/fuzzsight.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-  if (logfd >= 0) { dup2(logfd, STDERR_FILENO); close(logfd); }
+  // int logfd = open("/tmp/fuzzsightq.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  // if (logfd >= 0) { dup2(logfd, STDERR_FILENO); close(logfd); }
 
   setbuf(stderr, NULL);
   setbuf(stdout, NULL);
@@ -474,7 +482,7 @@ static int __afl_end_testcase(void) {
   /* Main fuzzing loop */
   pid_t child;
   while ((child = __afl_next_testcase()) > 0) {
-    if (__afl_end_testcase() < 0) break;
+    if (__afl_end_testcase(child) < 0) break;
   }
 
   /* Teardown */

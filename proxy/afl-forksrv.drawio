@@ -1,0 +1,21 @@
+```mermaid
+sequenceDiagram
+    participant A as afl-fuzz
+    participant F as fork server
+    participant C as child process
+
+    F->>A: status word (map size, features)
+    A->>F: go signal (4 bytes)
+
+    loop per testcase
+        A->>F: go signal (4 bytes)
+        F->>F: fork()
+        F->>C: exec target binary
+        F->>A: child PID (4 bytes)
+        A-->>A: continues own work
+        C-->>C: runs, fills bitmap
+        C->>F: exits (wstatus)
+        F->>A: wstatus (4 bytes)
+        A-->>A: score, detect crashes
+    end
+```

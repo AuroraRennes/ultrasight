@@ -15,6 +15,14 @@
 #define FORKSRV_FD 198
 #define AFLCS_FORKSRV_FD (FORKSRV_FD - 3)
 
+static int (*real_main)(int, char **, char **);
+
+static int main_wrapper(int argc, char **argv, char **envp) {
+    int ret = real_main(argc, argv, envp);
+    raise(SIGSTOP);  // freeze before libc teardown
+    return ret;
+}
+
 static void __cs_start_forkserver(void) {
     int status;
     pid_t child_pid;
@@ -92,15 +100,14 @@ int __libc_start_main(int (*main)(int, char **, char **), int argc, char **argv,
                 void (*init)(void), void (*fini)(void), void (*rtld_fini)(void),
                 void *stack_end);
 
-    (void)argc;
-    (void)argv;
-
     orig = dlsym(RTLD_NEXT, __func__);
     if (!orig) {
         fprintf(stderr, "Did not find original %s: %s\n", __func__, dlerror());
         exit(EXIT_FAILURE);
     }
-    printf("Hook main ok\n");
+
+    real_main = main;
+
 
     if(getenv("CS_FORKSERVER") != NULL){
         /* AFL-CS-START */
@@ -110,5 +117,5 @@ int __libc_start_main(int (*main)(int, char **, char **), int argc, char **argv,
         raise(SIGSTOP);
     }
 
-  return orig(main, argc, argv, init, fini, rtld_fini, stack_end);
+  return orig(main_wrapper, argc, argv, init, fini, rtld_fini, stack_end);
 }
