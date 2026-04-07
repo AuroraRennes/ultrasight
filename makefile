@@ -51,6 +51,7 @@ LIBCSACCUTIL:=$(CSAL_LIB)/libcsacc_util.a
 INC:=include
 SRC:=src
 PROXY:=proxy
+LIB:=lib
 
 HDRS:= \
 	$(INC)/config.h \
@@ -129,8 +130,7 @@ DECODER := trc_pkt_lister
 DECODED_TRACE := $(DIR)/trace.opencsd
 LATEST := trace/latest.opencsd
 
-LIB_DIR:=lib
-LIBSTMPRELOAD:=$(LIB_DIR)/libstm_preload.so
+LIBSTMPRELOAD:=$(LIB)/libstm_preload.so
 
 # ----------------------------------------------------------------------------
 # Build targets
