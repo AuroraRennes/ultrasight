@@ -63,6 +63,7 @@ HDRS:= \
 	$(INC)/decoder_stats.h \
 	$(INC)/edge_stats.h \
 	$(INC)/bitmap_dma.h \
+	$(INC)/timing.h \
 
 OBJS:= \
 	$(SRC)/common.o \
@@ -83,6 +84,10 @@ ifneq ($(strip $(DEBUG)),)
 	CFLAGS+=-O0 -g
 else
 	CFLAGS+=-Ofast
+endif
+
+ifneq ($(strip $(TIMING)),)
+    CFLAGS += -DTIMING
 endif
 
 # cs-trace - Standalone tracer
@@ -171,7 +176,9 @@ debug: $(CS_TRACE) $(TESTS_DUMPS) disable_aslr
 	cd $(DIR) && \
 	sudo gdb --args $(realpath $(CS_TRACE)) $(CS_TRACE_FLAGS) -- $(realpath $(TRACEE)) $(TRACEE_ARGS)
 
-proxy: $(LIBFORKSRV) $(FUZZSIGHT_PROXY)
+proxy: $(LIBFORKSRV)
+	rm -f $(FUZZSIGHT_PROXY_OBJ) $(FUZZSIGHT_PROXY)
+	$(MAKE) $(FUZZSIGHT_PROXY) AFL_INC=$(AFL_INC) DEBUG=$(DEBUG) TIMING=$(TIMING)
 
 # ----------------------------------------------------------------------------
 # Libraries
@@ -230,4 +237,4 @@ clean-test:
 
 clean-all: clean clean-trace clean-dist
 
-.PHONY: format libcsal clean trace libforksrv
+.PHONY: format libcsal clean trace libforksrv proxy
