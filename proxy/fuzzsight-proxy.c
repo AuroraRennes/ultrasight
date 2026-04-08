@@ -77,6 +77,7 @@
 #include "decoder_stats.h"
 #include "edge_stats.h"
 #include "common.h"
+#include "timing.h"
 
 /* Inner pipe fds used to talk to libforksrv inside the target.
    Must match AFL_FUZZSIGHT_FORKSRV_FD in libforksrv.so. */
@@ -290,37 +291,54 @@ static pid_t __afl_next_testcase(void) {
   s32 child_pid;
 
   /* Read go signal from AFL, forward to libforksrv */
+  TS_DECL(pipe);
+  TS_START(pipe);
   if (read(FORKSRV_FD, &was_killed, 4) != 4) return -1;
   if (write(proxy_ctl_fd, &was_killed, 4) != 4) return -1;
 
   /* libforksrv forks + child raises SIGSTOP before main(), sends us PID */
   if (read(proxy_st_fd, &child_pid, 4) != 4) return -1;
 
+  TS_STOP(pipe);
+  TS_PRINT(pipe, "initial pipe");
+
   /* One-time board registration + ETM address filter */
   if (first_run) {
     trace_cpu = 0;
+    TS_DECL(init);
+    TS_START(init);
     if (init_trace(fsrv_pid, child_pid) < 0) {
       fprintf(stderr, "[!] fuzzsight-proxy: init_trace failed\n");
       kill(child_pid, SIGKILL);
       return -1;
     }
+    TS_STOP(init);
+    TS_PRINT(init, "init_trace");
     first_run = 0;
   }
 
   /* Start CoreSight — child still frozen, safe */
+  TS_DECL(start);
+  TS_START(start);
   if (start_trace(child_pid, false) < 0) {
     fprintf(stderr, "[!] fuzzsight-proxy: start_trace failed\n");
     kill(child_pid, SIGKILL);
     return -1;
   }
+  TS_STOP(start);
+  TS_PRINT(start, "start_trace");
 
-  dec_stats_enable(&g_etm);
-  edge_stats_reset(&g_edge);
+  // dec_stats_enable(&g_etm);
+  // edge_stats_reset(&g_edge);
 
   /* Tell AFL the PID — AFL unblocks */
+  TS_DECL(next_pid);
+  TS_START(next_pid);
   if (write(FORKSRV_FD + 1, &child_pid, 4) != 4) return -1;
+  TS_STOP(next_pid);
+  TS_PRINT(next_pid, "next_pid");
 
-  /* Release child */
+  /* Release child into main */
   kill(child_pid, SIGCONT);
 
   return child_pid;
@@ -329,30 +347,27 @@ static pid_t __afl_next_testcase(void) {
 
 static int __afl_end_testcase(pid_t child_pid) {
   int wstatus;
-  struct timespec t1, t2;
 
   /* Wait for exit status from libforksrv */
     while (1) {
       if (read(proxy_st_fd, &wstatus, 4) != 4) return -1;
 
       if (WIFSTOPPED(wstatus) && WSTOPSIG(wstatus) == SIGSTOP) {
-          /* Could be the post-main freeze or a spurious SIGSTOP */
-          // clock_gettime(CLOCK_MONOTONIC, &t1);
+          TS_MEASURE(stop, "stop_trace",
           stop_trace(false);
-          // clock_gettime(CLOCK_MONOTONIC, &t2);
-          // fprintf(stderr, "[.] stop_trace took %.3f us\n",
-          //   (t2.tv_sec-t1.tv_sec) * 1e6 + (t2.tv_nsec-t1.tv_nsec)/1e3);
+          );
 
-          dec_stats_disable(&g_etm);
+          // dec_stats_disable(&g_etm);
 
-          // clock_gettime(CLOCK_MONOTONIC, &t1);
+          TS_MEASURE(dma, "dma_transfer",
           if (bitmap_dma_transfer(&g_dma) < 0)
               fprintf(stderr, "[!] fuzzsight-proxy: bitmap_dma_transfer failed\n");
-          // clock_gettime(CLOCK_MONOTONIC, &t2);
-          // fprintf(stderr, "[.] dma_transfer took %.3f us\n",
-          // (t2.tv_sec-t1.tv_sec) * 1e6 + (t2.tv_nsec-t1.tv_nsec)/1e3);
+          );
 
+          TS_MEASURE(copy, "mempy",
           memcpy(__afl_area_ptr, g_dma.buf, MAP_SIZE);
+          );
+
 
           /* Release child to let libc teardown complete */
           kill(child_pid, SIGCONT);
