@@ -15,14 +15,6 @@
 #define FORKSRV_FD 198
 #define AFLCS_FORKSRV_FD (FORKSRV_FD - 3)
 
-static int (*real_main)(int, char **, char **);
-
-static int main_wrapper(int argc, char **argv, char **envp) {
-    int ret = real_main(argc, argv, envp);
-    raise(SIGSTOP);  // freeze before libc teardown
-    return ret;
-}
-
 static void __cs_start_forkserver(void) {
     int status;
     pid_t child_pid;
@@ -75,6 +67,23 @@ static void __cs_start_forkserver(void) {
             _exit(6); // failed to send PID
         }
 
+        // /* Wait for second SIGSTOP — post main, pre teardown */
+        // if (waitpid(child_pid, &stop_status, WUNTRACED) < 0) {
+        //     _exit(7);
+        // }
+        // if (!WIFSTOPPED(stop_status) || WSTOPSIG(stop_status) != SIGSTOP) {
+        //     /* main exited without second stop — relay and continue */
+        //     if (write(AFLCS_FORKSRV_FD + 1, &stop_status, 4) != 4) {
+        //         _exit(8);
+        //     }
+        //     continue;
+        // }
+
+        // /* Relay second SIGSTOP to proxy as wstatus — proxy calls stop_trace */
+        // if (write(AFLCS_FORKSRV_FD + 1, &stop_status, 4) != 4){
+        //     _exit(9);
+        // }
+
         while (1) {
             /* Get status. */
             if (waitpid(child_pid, &status, WUNTRACED) < 0) {
@@ -106,16 +115,13 @@ int __libc_start_main(int (*main)(int, char **, char **), int argc, char **argv,
         exit(EXIT_FAILURE);
     }
 
-    real_main = main;
-
-
     if(getenv("CS_FORKSERVER") != NULL){
         /* AFL-CS-START */
         do { __cs_start_forkserver(); } while(0);
-    }else{
+    } else {
         /* CS-TRACE */
         raise(SIGSTOP);
     }
 
-  return orig(main_wrapper, argc, argv, init, fini, rtld_fini, stack_end);
+  return orig(main, argc, argv, init, fini, rtld_fini, stack_end);
 }

@@ -25,15 +25,19 @@
 
      1. Read go signal from AFL
      2. Forward go signal to libforksrv (inner pipe)
-     3. libforksrv forks the target, child raises(SIGSTOP) before main()
+     3. libforksrv forks the target, child runs CRT, then raises(SIGSTOP)
+        inside main_wrapper before calling real main()
      4. libforksrv sends child PID back on inner pipe
      5. init_trace() on first run (child is frozen, safe to read /proc/maps)
      6. start_trace()
      7. Forward child PID to AFL (AFL unblocks)
-     8. kill(child, SIGCONT) — child runs
-     9. Wait for exit status from libforksrv on inner pipe
-    10. stop_trace(), bitmap_dma_transfer(), memcpy to AFL shm
-    11. Forward wstatus to AFL
+     8. kill(child, SIGCONT) — child runs real main()
+     9. child raises second SIGSTOP inside main_wrapper after real main() returns
+    10. libforksrv relays second SIGSTOP wstatus to proxy on inner pipe
+    11. stop_trace(), bitmap_dma_transfer(), memcpy to AFL shm
+    12. libforksrv SIGCONTs child through libc teardown, waits for real exit
+    13. libforksrv relays real exit wstatus to proxy
+    14. Forward real wstatus to AFL
 
    One-time setup (before __afl_start_forkserver):
      - dec_stats_open()   AXI-Lite ETM statistics handle  - TODO: add an option to disable
@@ -76,6 +80,7 @@
 #include "bitmap_dma.h"
 #include "decoder_stats.h"
 #include "edge_stats.h"
+#include "frame_gen.h"
 #include "common.h"
 #include "timing.h"
 
@@ -107,6 +112,7 @@ u8 first_run = 1;
 static dec_stats_t  g_etm  = {0};
 static edge_stats_t g_edge = {0};
 static bitmap_dma_t g_dma  = {0};
+static frame_gen_t  g_fgen = {0};
 
 /* --------------------------------------------------------------------------
  * Globals required by the coresight library
@@ -317,10 +323,12 @@ static pid_t __afl_next_testcase(void) {
     first_run = 0;
   }
 
+  fprintf(stderr, "[D] before start: frame_gen_synchronized=%d\n", frame_gen_synchronized(&g_fgen));
+
   /* Start CoreSight — child still frozen, safe */
   TS_DECL(start);
   TS_START(start);
-  if (start_trace(child_pid, false) < 0) {
+  if (start_trace(child_pid, true) < 0) {
     fprintf(stderr, "[!] fuzzsight-proxy: start_trace failed\n");
     kill(child_pid, SIGKILL);
     return -1;
@@ -329,7 +337,6 @@ static pid_t __afl_next_testcase(void) {
   TS_PRINT(start, "start_trace");
 
   // dec_stats_enable(&g_etm);
-  // edge_stats_reset(&g_edge);
 
   /* Tell AFL the PID — AFL unblocks */
   TS_DECL(next_pid);
@@ -337,6 +344,10 @@ static pid_t __afl_next_testcase(void) {
   if (write(FORKSRV_FD + 1, &child_pid, 4) != 4) return -1;
   TS_STOP(next_pid);
   TS_PRINT(next_pid, "next_pid");
+
+  /* Wait until frame_generator has locked onto TPIU sync frames */
+  frame_gen_unfreeze(&g_fgen);
+  frame_gen_wait_synchronized(&g_fgen);
 
   /* Release child into main */
   kill(child_pid, SIGCONT);
@@ -349,38 +360,20 @@ static int __afl_end_testcase(pid_t child_pid) {
   int wstatus;
 
   /* Wait for exit status from libforksrv */
-    while (1) {
-      if (read(proxy_st_fd, &wstatus, 4) != 4) return -1;
+  if (read(proxy_st_fd, &wstatus, 4) != 4) return -1;
 
-      if (WIFSTOPPED(wstatus) && WSTOPSIG(wstatus) == SIGSTOP) {
-          TS_MEASURE(stop, "stop_trace",
-          stop_trace(false);
-          );
+  /* Stop trace regardless of how child stopped */
+  TS_MEASURE(stop, "stop_trace", stop_trace(true););
 
-          // dec_stats_disable(&g_etm);
+  frame_gen_freeze(&g_fgen);
 
-          TS_MEASURE(dma, "dma_transfer",
-          if (bitmap_dma_transfer(&g_dma) < 0)
-              fprintf(stderr, "[!] fuzzsight-proxy: bitmap_dma_transfer failed\n");
-          );
+  TS_MEASURE(dma, "dma_transfer",
+    if (bitmap_dma_transfer(&g_dma) < 0)
+      fprintf(stderr, "[!] fuzzsight-proxy: bitmap_dma_transfer failed\n");
+  );
+  fprintf(stderr, "[D] after dma: frame_gen_synchronized=%d\n", frame_gen_synchronized(&g_fgen));
 
-          TS_MEASURE(copy, "mempy",
-          memcpy(__afl_area_ptr, g_dma.buf, MAP_SIZE);
-          );
-
-
-          /* Release child to let libc teardown complete */
-          kill(child_pid, SIGCONT);
-          continue;
-      }
-
-      if (WIFCONTINUED(wstatus)) {
-          continue;
-      }
-
-      /* Child exited — report to AFL */
-      break;
-  }
+  TS_MEASURE(memcopy, "memcpy", memcpy(__afl_area_ptr, g_dma.buf, MAP_SIZE););
 
   // static unsigned char ref_bitmap[MAP_SIZE] = {0};
   // static int ref_bitmap_set = 0;
@@ -416,6 +409,7 @@ static int __afl_end_testcase(pid_t child_pid) {
   // }
 
   // edge_stats_print(&g_edge);
+  // edge_stats_reset(&g_edge);
 
   /* Report exit status to AFL */
   if (write(FORKSRV_FD + 1, &wstatus, 4) != 4) return -1;
@@ -429,8 +423,8 @@ static int __afl_end_testcase(pid_t child_pid) {
 
  int main(int argc, char *argv[]) {
 
-  // int logfd = open("/tmp/fuzzsightq.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-  // if (logfd >= 0) { dup2(logfd, STDERR_FILENO); close(logfd); }
+  int logfd = open("/tmp/fuzzsightq.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (logfd >= 0) { dup2(logfd, STDERR_FILENO); close(logfd); }
 
   setbuf(stderr, NULL);
   setbuf(stdout, NULL);
@@ -470,10 +464,17 @@ static int __afl_end_testcase(pid_t child_pid) {
     perror("[!] fuzzsight-proxy: dec_stats_open");
   if (edge_stats_open(&g_edge) < 0)
     perror("[!] fuzzsight-proxy: edge_stats_open");
+  if (frame_gen_open(&g_fgen) < 0) {
+    perror("[!] fuzzsight-proxy: frame_gen_open");
+    exit(EXIT_FAILURE);
+  }
   if (bitmap_dma_open(&g_dma, MAP_SIZE) < 0) {
     perror("[!] fuzzsight-proxy: bitmap_dma_open");
     exit(EXIT_FAILURE);
   }
+
+  /* Freeze by default */
+  frame_gen_freeze(&g_fgen);
 
   setenv("__AFLCS_ENABLE", "1", 0);
 
@@ -502,8 +503,8 @@ static int __afl_end_testcase(pid_t child_pid) {
 
   /* Teardown */
   fini_trace();
-  dec_stats_close(&g_etm);
-  edge_stats_close(&g_edge);
+  // dec_stats_close(&g_etm);
+  // edge_stats_close(&g_edge);
   bitmap_dma_close(&g_dma);
 
   return 0;
