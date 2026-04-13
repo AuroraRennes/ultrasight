@@ -320,6 +320,47 @@ int configure_trace(const struct board *board, struct cs_devices_t *devices,
 }
 
 /**
+ * Reconfigure only the CID comparator on the traced CPU's ETM.
+ * ETM must be disabled before calling (call disable_cs_trace first).
+ * Called once per fuzzing iteration with the new child PID.
+ */
+int reconfigure_cid(const struct board *board, struct cs_devices_t *devices, pid_t pid)
+{
+    int error_count;
+    size_t cididx = 0;
+
+    for (int i = 0; i < board->n_cpu; i++) {
+        cs_etmv4_config_t tconfig;
+        cs_device_t etm = devices->ptm[i];
+
+        cs_etm_config_init_ex(etm, &tconfig);
+        tconfig.flags = CS_ETMC_CXID_COMP | CS_ETMC_CONFIG;
+        cs_etm_config_get_ex(etm, &tconfig);
+
+        /* Explicitly enable CID filtering — do not rely on the hardware
+         * preserving configr.bits.cid across disable/enable cycles. */
+        if (tconfig.scv4->idr2.bits.vmidsize > 0)
+            tconfig.configr.bits.vmid = 0;
+        if (tconfig.scv4->idr2.bits.cidsize > 0)
+            tconfig.configr.bits.cid = 1;
+
+        tconfig.cxid_comps[cididx].cidcvr_l = (unsigned long)pid & 0xFFFFFFFF;
+        tconfig.cxid_comps[cididx].cidcvr_h = ((unsigned long)pid >> 32) & 0xFFFFFFFF;
+        tconfig.cidcctlr0 &= ~(1 << cididx);
+        tconfig.cxid_comps_acc_mask |= (1 << cididx);
+
+        cs_etm_config_put_ex(etm, &tconfig);
+    }
+
+    error_count = cs_error_count();
+    if (error_count > 0) {
+        fprintf(stderr, "[!] %d errors reconfiguring CID\n", error_count);
+        return -1;
+    }
+    return 0;
+}
+
+/**
  * Trace enable, setting up and enabling ETR, ETF
  */
 int enable_trace(const struct board *board, struct cs_devices_t *devices)
@@ -349,7 +390,6 @@ int enable_trace(const struct board *board, struct cs_devices_t *devices)
       fprintf(stderr, "[!] Failed to setup TPIU\n");
     return -1;
     }
-    // printf("[+] TPIU enabled!\n");
   }
 
   /* Setup and enable ETFs as HW FIFO sinks in the system (there are two on the

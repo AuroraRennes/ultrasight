@@ -524,9 +524,13 @@ static int enable_cs_trace(pid_t pid)
     }
     is_first_trace = false;
   } else {
+    if (reconfigure_cid(board, &devices, pid) < 0) {
+      fprintf(stderr, "[!] reconfigure_cid() failed\n");
+      goto exit;
+    }
     /* Enable trace sinks only once the ETMs enabled */
     // printf("[+] Enabling sinks only\n");
-    if (enable_trace_sinks_only(board, &devices) < 0) {
+    if (enable_trace(board, &devices) < 0) {
       fprintf(stderr, "[!] enable_trace_sinks_only() failed\n");
       goto exit;
     }
@@ -906,6 +910,11 @@ int init_trace(pid_t parent_pid, pid_t pid)
   if ((range_count = setup_map_info(pid, map_info, RANGE_MAX)) < 0) {
     fprintf(stderr, "[!] setup_map_info() failed\n");
     goto exit;
+  }
+
+  for (int i = 0; i < range_count; i++) {
+    fprintf(stderr, "[~] traced range %d: 0x%lx - 0x%lx (%s)\n",
+            i, map_info[i].start, map_info[i].end, map_info[i].path);
   }
 
   /* Setup board variables for a given board defined in known_board.h */
