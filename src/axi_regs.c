@@ -54,6 +54,6 @@ void axi_regs_write(axi_regs_t *handle, uint32_t offset, uint32_t value)
 void axi_regs_print(axi_regs_t *handle, const axi_reg_desc_t *descs, size_t n)
 {
     for (size_t i = 0; i < n; i++)
-        printf("%-25s : %u\n", descs[i].name,
+        fprintf(stderr, "%-25s : %u\n", descs[i].name,
                axi_regs_read(handle, descs[i].offset));
 }

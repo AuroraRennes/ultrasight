@@ -63,6 +63,7 @@ HDRS:= \
 	$(INC)/decoder_stats.h \
 	$(INC)/edge_stats.h \
 	$(INC)/bitmap_dma.h \
+	$(INC)/decoder_errors.h \
 	$(INC)/timing.h \
 
 OBJS:= \
