@@ -34,6 +34,7 @@
 #include "decoder_stats.h"
 #include "edge_stats.h"
 #include "bitmap_dma.h"
+#include "decoder_errors.h"
 
 /**
  * Extern value definitions
@@ -99,6 +100,7 @@ void parent(pid_t pid, int *child_status)
   dec_stats_t etm_handle, stm_handle;
   edge_stats_t edge_handle;
   bitmap_dma_t dma_handle;
+  decoder_errors_t dec_err_handle;
 
   /* Global timer starts before anything, including the initial waitpid */
   clock_gettime(CLOCK_MONOTONIC, &global_start);
@@ -138,8 +140,12 @@ void parent(pid_t pid, int *child_status)
       ret = bitmap_dma_open(&dma_handle, DEFAULT_TRACE_BITMAP_SIZE);
       if (ret < 0) perror("[!] Bitmap DMA setup issue");
 
+      ret = decoder_errors_open(&dec_err_handle);
+      if (ret < 0) perror("[!] Decoder AXI errors setup issue");
+
       dec_stats_enable(&etm_handle);
-      edge_stats_reset_all(&edge_handle);
+      edge_stats_reset(&edge_handle);
+      decoder_errors_reset(&dec_err_handle);
 
       printf("[+] Sending CONT signal to child\n");
 
@@ -182,7 +188,10 @@ void parent(pid_t pid, int *child_status)
           dec_stats_print(&etm_handle);
           printf("============= EDGES =============\n");
           edge_stats_print(&edge_handle);
+          printf("============ DEC ERR ============\n");
+          decoder_errors_print(&dec_err_handle);
 
+          printf("============== DMA ==============\n");
           printf("[+] Triggering bitmap DMA readout\n");
           struct timespec dma_start, dma_end;
           clock_gettime(CLOCK_MONOTONIC, &dma_start);
@@ -194,8 +203,29 @@ void parent(pid_t pid, int *child_status)
           printf("[+] Bitmap DMA complete in %.2f us, %zu bytes in udmabuf\n",
                  dma_elapsed_us, dma_handle.buf_size);
 
+          printf("[+] Bitmap non-zero entries:\n");
+          unsigned char *bmap = (unsigned char *)dma_handle.buf;
+          for (size_t i = 0; i < dma_handle.buf_size; i++) {
+              if (bmap[i] != 0) {
+                  printf("  [0x%04zx] = 0x%02x\n", i, bmap[i]);
+              }
+          }
+
+          printf("============= DMA 2 =============\n");
+          printf("[+] Triggering bitmap DMA readout\n");
+          ret = bitmap_dma_transfer(&dma_handle);
+          printf("[+] Bitmap non-zero entries:\n");
+          bmap = (unsigned char *)dma_handle.buf;
+          for (size_t i = 0; i < dma_handle.buf_size; i++) {
+              if (bmap[i] != 0) {
+                  printf("  [0x%04zx] = 0x%02x\n", i, bmap[i]);
+              }
+          }
+
+
           dec_stats_close(&etm_handle);
           edge_stats_close(&edge_handle);
+          decoder_errors_close(&dec_err_handle);
 
           /* Instrumentation timer ends after full teardown */
           clock_gettime(CLOCK_MONOTONIC, &instr_end);
