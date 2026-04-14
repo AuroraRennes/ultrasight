@@ -75,6 +75,7 @@
 /* FuzzSight headers */
 #include "bitmap_dma.h"
 #include "decoder_stats.h"
+#include "decoder_errors.h"
 #include "edge_stats.h"
 #include "common.h"
 #include "timing.h"
@@ -103,10 +104,13 @@ s32 proxy_ctl_fd = -1;
 s32 proxy_st_fd = -1;
 
 u8 first_run = 1;
+u8 first_dump = 1;
+
 
 static dec_stats_t  g_etm  = {0};
 static edge_stats_t g_edge = {0};
 static bitmap_dma_t g_dma  = {0};
+static decoder_errors_t g_dec = {0};
 
 /* --------------------------------------------------------------------------
  * Globals required by the coresight library
@@ -315,12 +319,15 @@ static pid_t __afl_next_testcase(void) {
     TS_STOP(init);
     TS_PRINT(init, "init_trace");
     first_run = 0;
+
+    if (bitmap_dma_transfer(&g_dma) < 0)
+      fprintf(stderr, "[!] fuzzsight-proxy: clear bitmap_dma_transfer failed\n");
   }
 
   /* Start CoreSight — child still frozen, safe */
   TS_DECL(start);
   TS_START(start);
-  if (start_trace(child_pid, false) < 0) {
+  if (start_trace(child_pid, true) < 0) {
     fprintf(stderr, "[!] fuzzsight-proxy: start_trace failed\n");
     kill(child_pid, SIGKILL);
     return -1;
@@ -329,7 +336,7 @@ static pid_t __afl_next_testcase(void) {
   TS_PRINT(start, "start_trace");
 
   // dec_stats_enable(&g_etm);
-  // edge_stats_reset(&g_edge);
+  edge_stats_reset(&g_edge);
 
   /* Tell AFL the PID — AFL unblocks */
   TS_DECL(next_pid);
@@ -349,73 +356,53 @@ static int __afl_end_testcase(pid_t child_pid) {
   int wstatus;
 
   /* Wait for exit status from libforksrv */
-    while (1) {
-      if (read(proxy_st_fd, &wstatus, 4) != 4) return -1;
+  if (read(proxy_st_fd, &wstatus, 4) != 4) return -1;
 
-      if (WIFSTOPPED(wstatus) && WSTOPSIG(wstatus) == SIGSTOP) {
-          TS_MEASURE(stop, "stop_trace",
-          stop_trace(false);
-          );
+  TS_MEASURE(stop, "stop_trace",
+  stop_trace(true);
+  );
 
-          // dec_stats_disable(&g_etm);
+  decoder_errors_flush(&g_dec);
 
-          TS_MEASURE(dma, "dma_transfer",
-          if (bitmap_dma_transfer(&g_dma) < 0)
-              fprintf(stderr, "[!] fuzzsight-proxy: bitmap_dma_transfer failed\n");
-          );
+  TS_MEASURE(dma, "dma_transfer",
+  if (bitmap_dma_transfer(&g_dma) < 0)
+      fprintf(stderr, "[!] fuzzsight-proxy: bitmap_dma_transfer failed\n");
+  );
 
-          TS_MEASURE(copy, "mempy",
-          memcpy(__afl_area_ptr, g_dma.buf, MAP_SIZE);
-          );
+  TS_MEASURE(copy, "memcpy",
+  memcpy(__afl_area_ptr, g_dma.buf, MAP_SIZE);
+  );
 
 
-          /* Release child to let libc teardown complete */
-          kill(child_pid, SIGCONT);
-          continue;
+  /* Comparing bitmaps */
+  static unsigned char ref_bitmap[MAP_SIZE] = {0};
+  static int ref_bitmap_set = 0;
+  static const unsigned char zero_bitmap[MAP_SIZE] = {0};
+
+  unsigned char *bitmap = (unsigned char *)g_dma.buf;
+
+  if (!ref_bitmap_set) {
+      memcpy(ref_bitmap, bitmap, MAP_SIZE);
+      ref_bitmap_set = 1;
+      fprintf(stderr, "[.] reference bitmap stored\n");
+  } else {
+      if (memcmp(ref_bitmap, bitmap, MAP_SIZE) != 0) {
+          fprintf(stderr, "[.] reference bitmap:\n");
+          for (int i = 0; i < MAP_SIZE; i++) {
+              if (bitmap[i] != 0)
+                  fprintf(stderr, "[.] ref [0x%x] =%02x\n",
+                          i, bitmap[i]);
+          }
+          fprintf(stderr, "[.] bitmap differs from reference:\n");
+          for (int i = 0; i < MAP_SIZE; i++) {
+              if (ref_bitmap[i] != bitmap[i])
+                  fprintf(stderr, "[.] diff [0x%x]: ref=%02x cur=%02x\n",
+                          i, ref_bitmap[i], bitmap[i]);
+          }
+          edge_stats_print(&g_edge);
+          decoder_errors_print(&g_dec);
       }
-
-      if (WIFCONTINUED(wstatus)) {
-          continue;
-      }
-
-      /* Child exited — report to AFL */
-      break;
   }
-
-  // static unsigned char ref_bitmap[MAP_SIZE] = {0};
-  // static int ref_bitmap_set = 0;
-
-  // unsigned char *bitmap = (unsigned char *)g_dma.buf;
-
-  // /* Comparing bitmaps */
-  // int nonzero = 0;
-  // for (int i = 0; i < MAP_SIZE; i++) {
-  //     if (bitmap[i] != 0) {
-  //         fprintf(stderr, "[.] nonzero at [0x%x]: %02x\n", i, bitmap[i]);
-  //         nonzero = 1;
-  //     }
-  // }
-  // if (nonzero == 0)
-  //     fprintf(stderr, "[.] bitmap is ALL ZEROS\n");
-
-  // if (!ref_bitmap_set) {
-  //     memcpy(ref_bitmap, bitmap, MAP_SIZE);
-  //     ref_bitmap_set = 1;
-  //     fprintf(stderr, "[.] reference bitmap stored\n");
-  // } else {
-  //     int diffs = 0;
-  //     for (int i = 0; i < MAP_SIZE; i++) {
-  //         if (ref_bitmap[i] != bitmap[i]) {
-  //             fprintf(stderr, "[.] bitmap diff at [0x%x]: ref=%02x cur=%02x\n",
-  //                     i, ref_bitmap[i], bitmap[i]);
-  //             diffs = diffs + 1;
-  //         }
-  //     }
-  //     if (diffs == 0)
-  //         fprintf(stderr, "[.] bitmap identical to reference\n");
-  // }
-
-  // edge_stats_print(&g_edge);
 
   /* Report exit status to AFL */
   if (write(FORKSRV_FD + 1, &wstatus, 4) != 4) return -1;
@@ -470,6 +457,8 @@ static int __afl_end_testcase(pid_t child_pid) {
     perror("[!] fuzzsight-proxy: dec_stats_open");
   if (edge_stats_open(&g_edge) < 0)
     perror("[!] fuzzsight-proxy: edge_stats_open");
+  if(decoder_errors_open(&g_dec))
+    perror("[!] fuzzsight-proxy: decoder_errors_open");
   if (bitmap_dma_open(&g_dma, MAP_SIZE) < 0) {
     perror("[!] fuzzsight-proxy: bitmap_dma_open");
     exit(EXIT_FAILURE);
