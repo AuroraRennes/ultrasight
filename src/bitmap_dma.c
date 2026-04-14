@@ -24,7 +24,7 @@ int bitmap_dma_open(bitmap_dma_t *h, size_t bitmap_size)
     }
 
     // Map udmabuf as destination
-    h->udmabuf_fd = open("/dev/tpiu-doctor0", O_RDWR);
+    h->udmabuf_fd = open("/dev/tpiu-doctor0", O_RDWR | O_SYNC);
     if (h->udmabuf_fd < 0) {
         perror("open udmabuf0");
         axi_regs_close(&h->dma);
@@ -72,15 +72,16 @@ int bitmap_dma_transfer(bitmap_dma_t *h)
     // Arm S2MM by writting the buffer length, triggering the transfer
     axi_regs_write(&h->dma, S2MM_BUFF_LENGTH_REGISTER, h->buf_size);
 
-    // Wait for bitmap reader to confirm done
-    while (!(axi_regs_read(&h->reader, BITMAP_READER_STATUS) & STATUS_DMA_DONE))
-        ;
-
     // Wait for S2MM to complete
     uint32_t status;
     do {
         status = axi_regs_read(&h->dma, S2MM_STATUS_REGISTER);
     } while (!(status & STATUS_IOC_IRQ) || !(status & STATUS_IDLE));
+
+
+    // Wait for bitmap reader to confirm done
+    while (!(axi_regs_read(&h->reader, BITMAP_READER_STATUS) & STATUS_DMA_DONE))
+        ;
 
     // Rearm S2MM for next transfer
     axi_regs_write(&h->dma, S2MM_DST_ADDRESS_REGISTER, UDMABUF_DST);
