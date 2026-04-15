@@ -75,7 +75,7 @@
 /* FuzzSight headers */
 #include "bitmap_dma.h"
 #include "decoder_stats.h"
-#include "decoder_errors.h"
+#include "decoder_axi.h"
 #include "edge_stats.h"
 #include "common.h"
 #include "timing.h"
@@ -110,7 +110,7 @@ u8 first_dump = 1;
 static dec_stats_t  g_etm  = {0};
 static edge_stats_t g_edge = {0};
 static bitmap_dma_t g_dma  = {0};
-static decoder_errors_t g_dec = {0};
+static decoder_axi_t g_dec = {0};
 
 /* --------------------------------------------------------------------------
  * Globals required by the coresight library
@@ -362,7 +362,8 @@ static int __afl_end_testcase(pid_t child_pid) {
   stop_trace(true);
   );
 
-  decoder_errors_flush(&g_dec);
+  decoder_axi_soft_reset(&g_dec);
+  decoder_axi_stats_reset(&g_dec);
 
   TS_MEASURE(dma, "dma_transfer",
   if (bitmap_dma_transfer(&g_dma) < 0)
@@ -457,8 +458,8 @@ static int __afl_end_testcase(pid_t child_pid) {
     perror("[!] fuzzsight-proxy: dec_stats_open");
   if (edge_stats_open(&g_edge) < 0)
     perror("[!] fuzzsight-proxy: edge_stats_open");
-  if(decoder_errors_open(&g_dec))
-    perror("[!] fuzzsight-proxy: decoder_errors_open");
+  if(decoder_axi_open(&g_dec))
+    perror("[!] fuzzsight-proxy: decoder_axi_open");
   if (bitmap_dma_open(&g_dma, MAP_SIZE) < 0) {
     perror("[!] fuzzsight-proxy: bitmap_dma_open");
     exit(EXIT_FAILURE);
