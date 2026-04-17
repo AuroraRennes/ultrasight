@@ -2,8 +2,6 @@
 #ifndef BITMAP_DMA_H
 #define BITMAP_DMA_H
 
-#include <stdint.h>
-#include <stddef.h>
 #include "axi_regs.h"
 
 // AXI DMA registers (S2MM only)
@@ -34,9 +32,8 @@
 #define BITMAP_READER_MAP_SIZE      0x1000
 #define BITMAP_READER_CTRL          0x00
 #define BITMAP_READER_STATUS        0x04
-#define STATUS_FIFO_EMPTY           (1 << 0)
-#define STATUS_DMA_DONE             (1 << 1)
-#define STATUS_WRITER_IDLE          (1 << 3)
+#define STATUS_DMA_DONE             (1 << 0)
+#define STATUS_DMA_BUSY             (1 << 1)
 
 #ifndef BITMAP_READER_BASE
 #pragma message("WARNING: BITMAP_READER_BASE not defined, using placeholder")

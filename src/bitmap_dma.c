@@ -62,12 +62,12 @@ void bitmap_dma_close(bitmap_dma_t *h)
 
 int bitmap_dma_transfer(bitmap_dma_t *h)
 {
-    // Wait for edge extractor FIFO to drain
-    while (!(axi_regs_read(&h->reader, BITMAP_READER_STATUS) & STATUS_FIFO_EMPTY))
-        ;
-
     // Trigger bitmap reader DMA
     axi_regs_write(&h->reader, BITMAP_READER_CTRL, 1);
+
+    // // Wait for dma busy
+    while (!(axi_regs_read(&h->reader, BITMAP_READER_STATUS) & STATUS_DMA_BUSY))
+        ;
 
     // Arm S2MM by writting the buffer length, triggering the transfer
     axi_regs_write(&h->dma, S2MM_BUFF_LENGTH_REGISTER, h->buf_size);

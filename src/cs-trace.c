@@ -34,7 +34,7 @@
 #include "decoder_stats.h"
 #include "edge_stats.h"
 #include "bitmap_dma.h"
-#include "decoder_errors.h"
+#include "decoder_axi.h"
 
 /**
  * Extern value definitions
@@ -100,7 +100,7 @@ void parent(pid_t pid, int *child_status)
   dec_stats_t etm_handle, stm_handle;
   edge_stats_t edge_handle;
   bitmap_dma_t dma_handle;
-  decoder_errors_t dec_err_handle;
+  decoder_axi_t dec_axi_handle;
 
   /* Global timer starts before anything, including the initial waitpid */
   clock_gettime(CLOCK_MONOTONIC, &global_start);
@@ -140,12 +140,13 @@ void parent(pid_t pid, int *child_status)
       ret = bitmap_dma_open(&dma_handle, DEFAULT_TRACE_BITMAP_SIZE);
       if (ret < 0) perror("[!] Bitmap DMA setup issue");
 
-      ret = decoder_errors_open(&dec_err_handle);
+      ret = decoder_axi_open(&dec_axi_handle);
       if (ret < 0) perror("[!] Decoder AXI errors setup issue");
 
       dec_stats_enable(&etm_handle);
       edge_stats_reset(&edge_handle);
-      decoder_errors_reset(&dec_err_handle);
+      decoder_axi_stats_reset(&dec_axi_handle);
+      decoder_axi_soft_reset(&dec_axi_handle);
 
       printf("[+] Sending CONT signal to child\n");
 
@@ -189,7 +190,7 @@ void parent(pid_t pid, int *child_status)
           printf("============= EDGES =============\n");
           edge_stats_print(&edge_handle);
           printf("============ DEC ERR ============\n");
-          decoder_errors_print(&dec_err_handle);
+          decoder_axi_print(&dec_axi_handle);
 
           printf("============== DMA ==============\n");
           printf("[+] Triggering bitmap DMA readout\n");
@@ -225,7 +226,7 @@ void parent(pid_t pid, int *child_status)
 
           dec_stats_close(&etm_handle);
           edge_stats_close(&edge_handle);
-          decoder_errors_close(&dec_err_handle);
+          decoder_axi_close(&dec_axi_handle);
 
           /* Instrumentation timer ends after full teardown */
           clock_gettime(CLOCK_MONOTONIC, &instr_end);

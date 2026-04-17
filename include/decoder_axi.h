@@ -14,10 +14,10 @@
 /* Register offsets */
 typedef enum {
     DECODER_AXI_CTRL    = 0x00,  // bit 0 = error count reset
-    DECODER_AXI_FRAME   = 0x04,  // edges_total
-    DECODER_AXI_BS_GEN  = 0x08,  // fifo_overflow_count
-    DECODER_AXI_DEMUX   = 0x0C,  // freeze_drop_count
-    DECODER_AXI_STATUS  = 0x10,  // status register to poll flush
+    DECODER_AXI_FRAME   = 0x04,  // frame errors
+    DECODER_AXI_BS_GEN  = 0x08,  // bytestream errors
+    DECODER_AXI_DEMUX   = 0x0C,  // demux errors
+    DECODER_AXI_STATUS  = 0x10,  // status register to poll soft reset
 } decoder_axi_reg_t;
 
 /* Control register bits */
@@ -34,7 +34,7 @@ static inline int  decoder_axi_open(decoder_axi_t *handle)
     { return axi_regs_open(handle, DECODER_AXI_BASE,DECODER_AXI_MAP_SIZE); }
 static inline void decoder_axi_close(decoder_axi_t *handle)
     { axi_regs_close(handle); }
-static inline void decoder_axi_reset(decoder_axi_t *handle)
+static inline void decoder_axi_stats_reset(decoder_axi_t *handle)
     { axi_regs_write(handle, DECODER_AXI_CTRL, DECODER_AXI_CTRL_STATS_RESET); }
 static inline uint32_t decoder_axi_read(decoder_axi_t *handle, decoder_axi_reg_t reg)
     { return axi_regs_read(handle, reg); }
