@@ -429,7 +429,7 @@ static void free_ksight_buf(void)
 /**
  * Export trace to file name "cwd/trace_name"
  */
-static int export_trace(const char *trace_name)
+int export_trace(const char *trace_name)
 {
   int ret;
   char *cwd;
@@ -461,6 +461,52 @@ exit:
     free(cwd);
   }
   return ret;
+}
+
+int export_trace_with_config(int n)
+{
+    char dirname[256];
+    char filename[512];
+    char *cwd;
+
+    /* Create a dedicated directory for this export */
+    snprintf(dirname, sizeof(dirname), "captures/cs-trace-%d", n);
+    if (mkdir(dirname, 0755) < 0 && errno != EEXIST) {
+        perror("[!] mkdir failed");
+        return -1;
+    }
+
+    /* Get current working directory */
+    cwd = getcwd(NULL, 0);
+    if (!cwd) {
+        perror("[!] getcwd failed");
+        return -1;
+    }
+
+    /* Change into the export directory */
+    if (chdir(dirname) < 0) {
+        perror("[!] chdir failed");
+        free(cwd);
+        return -1;
+    }
+
+    /* Fetch and export the trace binary */
+    fetch_trace();
+    export_trace("cstrace.bin");
+
+    /* Dump the CoreSight snapshot config into the same directory */
+    do_dump_config(board, &devices, 1);
+
+    /* Return to original directory */
+    if (chdir(cwd) < 0) {
+        perror("[!] chdir back failed");
+        free(cwd);
+        return -1;
+    }
+
+    free(cwd);
+    fprintf(stderr, "[.] Exported trace to %s/\n", dirname);
+    return 0;
 }
 
 /**

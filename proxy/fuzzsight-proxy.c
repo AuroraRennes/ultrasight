@@ -112,6 +112,8 @@ static edge_stats_t g_edge = {0};
 static bitmap_dma_t g_dma  = {0};
 static decoder_axi_t g_dec = {0};
 
+static int count = 0;
+
 /* --------------------------------------------------------------------------
  * Globals required by the coresight library
  * -------------------------------------------------------------------------- */
@@ -388,20 +390,23 @@ static int __afl_end_testcase(pid_t child_pid) {
       fprintf(stderr, "[.] reference bitmap stored\n");
   } else {
       if (memcmp(ref_bitmap, bitmap, MAP_SIZE) != 0) {
-          fprintf(stderr, "[.] reference bitmap:\n");
-          for (int i = 0; i < MAP_SIZE; i++) {
-              if (bitmap[i] != 0)
-                  fprintf(stderr, "[.] ref [0x%x] =%02x\n",
-                          i, bitmap[i]);
+          if (first_dump) {
+            int diff_count = 0;
+            fprintf(stderr, "[.] bitmap differs from reference:\n");
+            for (int i = 0; i < MAP_SIZE; i++) {
+                if (ref_bitmap[i] != bitmap[i])
+                    fprintf(stderr, "[.] diff [0x%x]: ref=%02x cur=%02x\n",
+                            i, ref_bitmap[i], bitmap[i]);
+                    diff_count = diff_count + abs(ref_bitmap[i] - bitmap[i]);
+            }
+            edge_stats_print(&g_edge);
+            decoder_axi_print(&g_dec);
+            fprintf(stderr, "Total diff edges: %d\n", diff_count);
+
+            export_trace_with_config(count);
+            count++;
+            first_dump = 0;
           }
-          fprintf(stderr, "[.] bitmap differs from reference:\n");
-          for (int i = 0; i < MAP_SIZE; i++) {
-              if (ref_bitmap[i] != bitmap[i])
-                  fprintf(stderr, "[.] diff [0x%x]: ref=%02x cur=%02x\n",
-                          i, ref_bitmap[i], bitmap[i]);
-          }
-          edge_stats_print(&g_edge);
-          decoder_errors_print(&g_dec);
       }
   }
 

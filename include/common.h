@@ -22,5 +22,6 @@ int start_trace(pid_t pid, bool use_pid_trace);
 int stop_trace(bool disable_all);
 void trace_suspend_callback(void);
 void trace_resume_callback(void);
+int export_trace_with_config(int n);
 
 #endif /* CS_TRACE_COMMON_H */
