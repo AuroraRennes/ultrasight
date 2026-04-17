@@ -322,6 +322,18 @@ static pid_t __afl_next_testcase(void) {
     TS_PRINT(init, "init_trace");
     first_run = 0;
 
+    /* Set address range filter in PL decoder from /proc/<child>/maps */
+    struct map_info range[1];
+    int n = setup_map_info(child_pid, range, 1);
+    if (n > 0) {
+        decoder_axi_set_range(&g_dec, range[0].start, range[0].end);
+    } else {
+        fprintf(stderr, "[!] fuzzsight-proxy: could not read map info for range filter\n");
+    }
+
+    decoder_axi_print_range(&g_dec);
+
+
     if (bitmap_dma_transfer(&g_dma) < 0)
       fprintf(stderr, "[!] fuzzsight-proxy: clear bitmap_dma_transfer failed\n");
   }
