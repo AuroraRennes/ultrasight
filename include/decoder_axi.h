@@ -13,15 +13,16 @@
 
 /* Register offsets */
 typedef enum {
-    DECODER_AXI_CTRL    = 0x00,  // bit 0 = error count reset
-    DECODER_AXI_FRAME   = 0x04,  // frame errors
-    DECODER_AXI_BS_GEN  = 0x08,  // bytestream errors
-    DECODER_AXI_DEMUX   = 0x0C,  // demux errors
-    DECODER_AXI_STATUS  = 0x10,  // status register to poll soft reset
-    DECODER_AXI_RANGE_BASE_LO  = 0x14, // Lower 32-bits of the base address
-    DECODER_AXI_RANGE_BASE_HI  = 0x18, // Upper 32-bits of the base address
-    DECODER_AXI_RANGE_END_LO   = 0x1C, // Lower 32-bits of the end address
-    DECODER_AXI_RANGE_END_HI   = 0x20, // Upper 32-bits of the base address
+    DECODER_AXI_CTRL           = 0x00, // bit 0 = error count reset, bit 1 = soft reset
+    DECODER_AXI_STATUS         = 0x04, // bit 0 = soft_reset_done
+    DECODER_AXI_FRAME          = 0x08, // frame errors
+    DECODER_AXI_BS_GEN         = 0x0C, // bytestream gen errors
+    DECODER_AXI_DEMUX          = 0x10, // demux errors
+    DECODER_AXI_OVERFLOW       = 0x14, // ETM overflow packets
+    DECODER_AXI_RANGE_BASE_LO  = 0x18, // Lower 32-bits of the base address
+    DECODER_AXI_RANGE_BASE_HI  = 0x1C, // Upper 32-bits of the base address
+    DECODER_AXI_RANGE_END_LO   = 0x20, // Lower 32-bits of the end address
+    DECODER_AXI_RANGE_END_HI   = 0x24, // Upper 32-bits of the end address
 } decoder_axi_reg_t;
 
 /* Control register bits */
@@ -35,7 +36,7 @@ typedef axi_regs_t decoder_axi_t;
 
 /* Function mapping to axi_regs defaults */
 static inline int  decoder_axi_open(decoder_axi_t *handle)
-    { return axi_regs_open(handle, DECODER_AXI_BASE,DECODER_AXI_MAP_SIZE); }
+    { return axi_regs_open(handle, DECODER_AXI_BASE, DECODER_AXI_MAP_SIZE); }
 static inline void decoder_axi_close(decoder_axi_t *handle)
     { axi_regs_close(handle); }
 static inline void decoder_axi_stats_reset(decoder_axi_t *handle)
@@ -77,12 +78,12 @@ static inline void decoder_axi_print_range(decoder_axi_t *handle) {
     fprintf(stderr, "[.] decoder range: 0x%016lx - 0x%016lx\n", base, end);
 }
 
-
 /* Description used in the print */
 static axi_reg_desc_t decoder_axi_descs[] = {
-    {"Frame errors",  DECODER_AXI_FRAME},
+    {"Frame errors",          DECODER_AXI_FRAME},
     {"Bytestream gen errors", DECODER_AXI_BS_GEN},
-    {"Demux errors",  DECODER_AXI_DEMUX},
+    {"Demux errors",          DECODER_AXI_DEMUX},
+    {"ETM overflow packets",  DECODER_AXI_OVERFLOW},
 };
 
 static inline void decoder_axi_print(decoder_axi_t *h)
