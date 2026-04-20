@@ -224,8 +224,10 @@ int init_etm(cs_device_t dev)
 
   /* Enable the trace with parameters */
   v4config.flags |= CS_ETMC_TRACE_ENABLE | CS_ETMC_EVENTSELECT;
-  v4config.victlr = 0x201; /* Viewinst - trace all, ss started. */
-  v4config.viiectlr = 0;   /* no address range */
+  v4config.victlr   =
+    CS_ETMV4_VICTLR_ExEL0_S | CS_ETMV4_VICTLR_ExEL1_S | CS_ETMV4_VICTLR_ExEL2_S | CS_ETMV4_VICTLR_ExEL3_S |
+    CS_ETMV4_VICTLR_ExEL1_NS | CS_ETMV4_VICTLR_ExEL2_NS | CS_ETMV4_VICTLR_SSSTATUS | CS_ETMV4_VICTLR_ALWAYS ;
+  v4config.viiectlr = 1;   /* no address range */
   v4config.vissctlr = 0;   /* no start stop points */
 
   /* Disable all event tracing  */
