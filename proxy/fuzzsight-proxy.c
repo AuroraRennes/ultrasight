@@ -36,8 +36,8 @@
     11. Forward wstatus to AFL
 
    One-time setup (before __afl_start_forkserver):
-     - dec_stats_open()   AXI-Lite ETM statistics handle  - TODO: add an option to disable
-     - edge_stats_open()  AXI-Lite edge statistics handle - TODO: add an option to disable
+     - decoder_stats_open() AXI-Lite ETM statistics handle  - TODO: add an option to disable
+     - edge_stats_open()    AXI-Lite edge statistics handle - TODO: add an option to disable
      - bitmap_dma_open()  udmabuf DMA handle
 
    First iteration only (deferred until child PID is known):
@@ -107,10 +107,10 @@ u8 first_run = 1;
 u8 first_dump = 1;
 
 
-static dec_stats_t  g_etm  = {0};
-static edge_stats_t g_edge = {0};
-static bitmap_dma_t g_dma  = {0};
-static decoder_axi_t g_dec = {0};
+static decoder_stats_t g_stats = {0};
+static edge_stats_t g_edge     = {0};
+static bitmap_dma_t g_dma      = {0};
+static decoder_axi_t g_dec     = {0};
 
 static int count = 0;
 
@@ -331,8 +331,11 @@ static pid_t __afl_next_testcase(void) {
         fprintf(stderr, "[!] fuzzsight-proxy: could not read map info for range filter\n");
     }
 
+    /* Print range, if stderr is accessible */
     decoder_axi_print_range(&g_dec);
 
+    /* Initial decoder soft reset */
+    decoder_axi_soft_reset(&g_dec);
 
     if (bitmap_dma_transfer(&g_dma) < 0)
       fprintf(stderr, "[!] fuzzsight-proxy: clear bitmap_dma_transfer failed\n");
@@ -349,8 +352,11 @@ static pid_t __afl_next_testcase(void) {
   TS_STOP(start);
   TS_PRINT(start, "start_trace");
 
-  // dec_stats_enable(&g_etm);
+#ifdef STATS
   edge_stats_reset(&g_edge);
+  decoder_axi_stats_reset(&g_dec);
+  decoder_stats_enable(&g_stats);
+#endif
 
   /* Tell AFL the PID — AFL unblocks */
   TS_DECL(next_pid);
@@ -376,8 +382,15 @@ static int __afl_end_testcase(pid_t child_pid) {
   stop_trace(true);
   );
 
-  decoder_axi_soft_reset(&g_dec);
-  decoder_axi_stats_reset(&g_dec);
+#ifdef STATS
+  /* Stop stats collection */
+  decoder_stats_enable(&g_stats);
+
+  /* Print edge, decoder errors and decoder stats */
+  edge_stats_print(&g_edge);
+  decoder_axi_print(&g_dec);
+  decoder_stats_print(&g_stats);
+#endif
 
   TS_MEASURE(dma, "dma_transfer",
   if (bitmap_dma_transfer(&g_dma) < 0)
@@ -388,7 +401,7 @@ static int __afl_end_testcase(pid_t child_pid) {
   memcpy(__afl_area_ptr, g_dma.buf, MAP_SIZE);
   );
 
-
+#ifdef BITMAP_CMP
   /* Comparing bitmaps */
   static unsigned char ref_bitmap[MAP_SIZE] = {0};
   static int ref_bitmap_set = 0;
@@ -411,8 +424,6 @@ static int __afl_end_testcase(pid_t child_pid) {
                             i, ref_bitmap[i], bitmap[i]);
                     diff_count = diff_count + abs(ref_bitmap[i] - bitmap[i]);
             }
-            edge_stats_print(&g_edge);
-            decoder_axi_print(&g_dec);
             fprintf(stderr, "Total diff edges: %d\n", diff_count);
 
             export_trace_with_config(count);
@@ -421,6 +432,10 @@ static int __afl_end_testcase(pid_t child_pid) {
           }
       }
   }
+#endif
+
+  /* Reset the decoder */
+  decoder_axi_soft_reset(&g_dec);
 
   /* Report exit status to AFL */
   if (write(FORKSRV_FD + 1, &wstatus, 4) != 4) return -1;
@@ -434,8 +449,10 @@ static int __afl_end_testcase(pid_t child_pid) {
 
  int main(int argc, char *argv[]) {
 
-  // int logfd = open("/tmp/fuzzsightq.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-  // if (logfd >= 0) { dup2(logfd, STDERR_FILENO); close(logfd); }
+#if defined(STATS) || defined(BITMAP_CMP)
+  int logfd = open("/tmp/fuzzsightq.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (logfd >= 0) { dup2(logfd, STDERR_FILENO); close(logfd); }
+#endif
 
   setbuf(stderr, NULL);
   setbuf(stdout, NULL);
@@ -471,8 +488,8 @@ static int __afl_end_testcase(pid_t child_pid) {
     exit(EXIT_FAILURE);
   }
 
-  if (dec_stats_open(&g_etm) < 0)
-    perror("[!] fuzzsight-proxy: dec_stats_open");
+  if (decoder_stats_open(&g_stats) < 0)
+    perror("[!] fuzzsight-proxy: decoder_stats_open");
   if (edge_stats_open(&g_edge) < 0)
     perror("[!] fuzzsight-proxy: edge_stats_open");
   if(decoder_axi_open(&g_dec))
@@ -509,7 +526,7 @@ static int __afl_end_testcase(pid_t child_pid) {
 
   /* Teardown */
   fini_trace();
-  dec_stats_close(&g_etm);
+  decoder_stats_close(&g_stats);
   edge_stats_close(&g_edge);
   bitmap_dma_close(&g_dma);
 

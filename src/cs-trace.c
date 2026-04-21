@@ -97,7 +97,7 @@ void parent(pid_t pid, int *child_status)
   struct timespec instr_start, instr_end;
   struct timespec child_start, child_end;
   double child_elapsed = 0.0, instr_elapsed = 0.0, global_elapsed = 0.0;
-  dec_stats_t etm_handle, stm_handle;
+  decoder_stats_t dec_stats_etm_handle, dec_stats_stm_handle;
   edge_stats_t edge_handle;
   bitmap_dma_t dma_handle;
   decoder_axi_t dec_axi_handle;
@@ -131,7 +131,7 @@ void parent(pid_t pid, int *child_status)
         ksight_set_enable(1);
       }
 
-      ret = dec_stats_open(&etm_handle);
+      ret = decoder_stats_open(&dec_stats_etm_handle);
       if (ret < 0) perror("[!] ETM AXI stats mapping issue");
 
       ret = edge_stats_open(&edge_handle);
@@ -143,10 +143,11 @@ void parent(pid_t pid, int *child_status)
       ret = decoder_axi_open(&dec_axi_handle);
       if (ret < 0) perror("[!] Decoder AXI errors setup issue");
 
-      dec_stats_enable(&etm_handle);
+      // decoder_axi_soft_reset(&dec_axi_handle);
+      decoder_stats_enable(&dec_stats_etm_handle);
       edge_stats_reset(&edge_handle);
       decoder_axi_stats_reset(&dec_axi_handle);
-      decoder_axi_soft_reset(&dec_axi_handle);
+      bitmap_dma_transfer(&dma_handle); // Clearing DMA
 
       printf("[+] Sending CONT signal to child\n");
 
@@ -183,10 +184,10 @@ void parent(pid_t pid, int *child_status)
           fini_trace();
           printf("[+] Done!\n");
 
-          dec_stats_disable(&etm_handle);
+          decoder_stats_disable(&dec_stats_etm_handle);
 
-          printf("============== ETM ==============\n");
-          dec_stats_print(&etm_handle);
+          printf("========== DEC STATS ============\n");
+          decoder_stats_print(&dec_stats_etm_handle);
           printf("============= EDGES =============\n");
           edge_stats_print(&edge_handle);
           printf("============ DEC ERR ============\n");
@@ -224,7 +225,7 @@ void parent(pid_t pid, int *child_status)
           }
 
 
-          dec_stats_close(&etm_handle);
+          decoder_stats_close(&dec_stats_etm_handle);
           edge_stats_close(&edge_handle);
           decoder_axi_close(&dec_axi_handle);
 
