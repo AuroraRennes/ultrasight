@@ -119,6 +119,7 @@ static int count = 0;
  * -------------------------------------------------------------------------- */
 
 extern int            registration_verbose;
+extern bool           use_etr;
 extern char          *board_name;
 extern unsigned char *trace_bitmap;
 extern int            trace_bitmap_size;
@@ -469,6 +470,7 @@ static int __afl_end_testcase(pid_t child_pid) {
 
     /* ---- Initialize ---- */
   registration_verbose = 0;
+  use_etr = false;
 
   /* Find -- separator */
   char **target_argv = NULL;

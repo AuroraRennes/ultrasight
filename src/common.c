@@ -92,6 +92,7 @@ size_t ksight_ram_addr = 0;
 int range_count = 0;
 struct map_info map_info[RANGE_MAX];
 
+bool use_etr = true;
 bool fifo_sw = false;
 
 int fd = 0;

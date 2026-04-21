@@ -27,6 +27,7 @@ const bool cycle_count = false;
 extern unsigned long etr_ram_addr;
 extern size_t etr_ram_size;
 extern int registration_verbose;
+extern bool use_etr;
 
 /**
  * Set the ETB to manual flush and wait for the end of the trace.
@@ -257,8 +258,11 @@ int configure_trace(const struct board *board, struct cs_devices_t *devices,
 
   /* Ensure TPIU isn't generating back-pressure */
   cs_disable_tpiu();
-  /* While programming, ensure we are not collecting trace to the main buffer */
-  cs_sink_disable(devices->etb);
+
+  if (use_etr) {
+    /* While programming, ensure we are not collecting trace to the main buffer */
+    cs_sink_disable(devices->etb);
+  }
   /* Check all PTMs */
   for (i = 0; i < board->n_cpu; ++i) {
     /* Try to get the cpu, attribute an ID, and initialize the ETM */
@@ -304,12 +308,15 @@ int configure_trace(const struct board *board, struct cs_devices_t *devices,
   }
 
   /* Setup stop on flush for the main buffer */
-  unsigned int ffcr_val;
-  ffcr_val = cs_device_read(devices->etb, CS_ETB_FLFMT_CTRL);
-  ffcr_val |= CS_ETB_FLFMT_CTRL_StopFl;
-  if (cs_device_write(devices->etb, CS_ETB_FLFMT_CTRL, ffcr_val) != 0) {
-    fprintf(stderr, "[!] Failed to set stop on flush\n");
+  if (use_etr) {
+    unsigned int ffcr_val;
+    ffcr_val = cs_device_read(devices->etb, CS_ETB_FLFMT_CTRL);
+    ffcr_val |= CS_ETB_FLFMT_CTRL_StopFl;
+    if (cs_device_write(devices->etb, CS_ETB_FLFMT_CTRL, ffcr_val) != 0) {
+      fprintf(stderr, "[!] Failed to set stop on flush\n");
+    }
   }
+
 
   /* Count and display configuration errors */
   error_count = cs_error_count();
@@ -375,14 +382,16 @@ int enable_trace(const struct board *board, struct cs_devices_t *devices)
   }
 
   /* Setup and enable ETR as the main sink and trace buffer */
-  if (cs_sink_etr_setup(devices->etb, etr_ram_addr, etr_ram_size,
-                        board->etr_axictl) != 0) {
-    fprintf(stderr, "[!] Failed to setup ETR\n");
-    return -1;
-  }
-  if (cs_sink_enable(devices->etb) != 0) {
-    fprintf(stderr, "[!] Failed to enable ETR\n");
-    return -1;
+  if (use_etr) {
+    if (cs_sink_etr_setup(devices->etb, etr_ram_addr, etr_ram_size,
+                          board->etr_axictl) != 0) {
+      fprintf(stderr, "[!] Failed to setup ETR\n");
+      return -1;
+    }
+    if (cs_sink_enable(devices->etb) != 0) {
+      fprintf(stderr, "[!] Failed to enable ETR\n");
+      return -1;
+    }
   }
 
   /* Setup TPIU to export the trace to the PL.
@@ -456,8 +465,10 @@ int disable_trace(const struct board *board, struct cs_devices_t *devices)
     return -1;
   }
 
-  /* Set FFCR:FlushMan bit to stop capture. */
-  cs_etb_flush_and_wait_stop(devices);
+  if (use_etr) {
+    /* Set FFCR:FlushMan bit to stop capture. */
+    cs_etb_flush_and_wait_stop(devices);
+  }
 
   /* Disable source ETMs */
   for (i = 0; i < board->n_cpu; ++i) {
@@ -473,8 +484,11 @@ int disable_trace(const struct board *board, struct cs_devices_t *devices)
       cs_sink_disable(devices->trace_sinks[i]);
     }
   }
-  /* Disable the main sink (ETR) */
-  cs_sink_disable(devices->etb);
+
+  if (use_etr) {
+    /* Disable the main sink (ETR) */
+    cs_sink_disable(devices->etb);
+  }
 
   /* Disable TPIU if needed */
   if(devices->tpiu != NULL) {
@@ -514,15 +528,17 @@ int enable_trace_sinks_only(const struct board *board, struct cs_devices_t *devi
     return -1;
   }
 
+  if (use_etr) {
     /* Setup and enable ETR as the main sink and trace buffer */
-  if (cs_sink_etr_setup(devices->etb, etr_ram_addr, etr_ram_size,
-                      board->etr_axictl) != 0) {
-    fprintf(stderr, "[!] Failed to setup ETR\n");
-    return -1;
-  }
-  if (cs_sink_enable(devices->etb) != 0) {
-    fprintf(stderr, "[!] Failed to enable ETR\n");
-    return -1;
+    if (cs_sink_etr_setup(devices->etb, etr_ram_addr, etr_ram_size,
+                        board->etr_axictl) != 0) {
+      fprintf(stderr, "[!] Failed to setup ETR\n");
+      return -1;
+    }
+    if (cs_sink_enable(devices->etb) != 0) {
+      fprintf(stderr, "[!] Failed to enable ETR\n");
+      return -1;
+    }
   }
 
   /* Setup TPIU to export the trace to the PL.
@@ -577,8 +593,10 @@ int disable_trace_sinks_only(struct cs_devices_t *devices)
     return -1;
   }
 
-  /* Set FFCR:FlushMan bit to stop capture. */
-  cs_etb_flush_and_wait_stop(devices);
+  if (use_etr) {
+    /* Set FFCR:FlushMan bit to stop capture. */
+    cs_etb_flush_and_wait_stop(devices);
+  }
 
   /* Disable TPIU if needed */
   if(devices->tpiu != NULL) {
@@ -600,8 +618,11 @@ int disable_trace_sinks_only(struct cs_devices_t *devices)
         cs_tmc_hw_fifo_disable(devices->trace_sinks[i]);
     }
   }
-  /* Disable the main sink (ETR) */
-  cs_sink_disable(devices->etb);
+
+  if (use_etr) {
+    /* Disable the main sink (ETR) */
+    cs_sink_disable(devices->etb);
+  }
 
 
   /* Check for errors */

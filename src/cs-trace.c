@@ -42,6 +42,7 @@
 #define DEFAULT_TRACE_BITMAP_SIZE_POW2 (16)
 #define DEFAULT_TRACE_BITMAP_SIZE (1U << (DEFAULT_TRACE_BITMAP_SIZE_POW2))
 extern int registration_verbose;
+extern bool use_etr;
 extern char *board_name;
 extern bool export_config;
 extern bool fetcher_on;
