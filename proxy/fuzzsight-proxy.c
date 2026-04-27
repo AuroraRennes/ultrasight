@@ -113,6 +113,7 @@ static bitmap_dma_t g_dma      = {0};
 static decoder_axi_t g_dec     = {0};
 
 static int count = 0;
+static int max_captures = 10;
 
 /* --------------------------------------------------------------------------
  * Globals required by the coresight library
@@ -414,23 +415,24 @@ static int __afl_end_testcase(pid_t child_pid) {
       memcpy(ref_bitmap, bitmap, MAP_SIZE);
       ref_bitmap_set = 1;
       fprintf(stderr, "[.] reference bitmap stored\n");
+      export_trace_with_config(count);
+      count++;
   } else {
       if (memcmp(ref_bitmap, bitmap, MAP_SIZE) != 0) {
-          if (first_dump) {
-            int diff_count = 0;
-            fprintf(stderr, "[.] bitmap differs from reference:\n");
-            for (int i = 0; i < MAP_SIZE; i++) {
-                if (ref_bitmap[i] != bitmap[i])
-                    fprintf(stderr, "[.] diff [0x%x]: ref=%02x cur=%02x\n",
-                            i, ref_bitmap[i], bitmap[i]);
-                    diff_count = diff_count + abs(ref_bitmap[i] - bitmap[i]);
-            }
-            fprintf(stderr, "Total diff edges: %d\n", diff_count);
+        int diff_count = 0;
+        fprintf(stderr, "[.] bitmap differs from reference:\n");
+        for (int i = 0; i < MAP_SIZE; i++) {
+            if (ref_bitmap[i] != bitmap[i])
+                fprintf(stderr, "[.] diff [0x%x]: ref=%02x cur=%02x\n",
+                        i, ref_bitmap[i], bitmap[i]);
+                diff_count = diff_count + abs(ref_bitmap[i] - bitmap[i]);
+        }
+        fprintf(stderr, "Total diff edges: %d\n", diff_count);
 
-            export_trace_with_config(count);
-            count++;
-            first_dump = 0;
-          }
+        if (count <= max_captures) {
+          export_trace_with_config(count);
+          count++;
+        }
       }
   }
 #endif
@@ -450,7 +452,7 @@ static int __afl_end_testcase(pid_t child_pid) {
 
  int main(int argc, char *argv[]) {
 
-#if defined(STATS) || defined(BITMAP_CMP)
+#if defined(STATS) || defined(BITMAP_CMP) || defined(TIMING)
   int logfd = open("/tmp/fuzzsightq.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
   if (logfd >= 0) { dup2(logfd, STDERR_FILENO); close(logfd); }
 #endif
@@ -470,7 +472,11 @@ static int __afl_end_testcase(pid_t child_pid) {
 
     /* ---- Initialize ---- */
   registration_verbose = 0;
+#ifdef BITMAP_CMP
+  use_etr = true;
+#else
   use_etr = false;
+#endif
 
   /* Find -- separator */
   char **target_argv = NULL;

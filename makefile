@@ -91,6 +91,10 @@ ifneq ($(strip $(TIMING)),)
     CFLAGS += -DTIMING
 endif
 
+ifneq ($(strip $(BITMAP_CMP)),)
+    CFLAGS += -DBITMAP_CMP
+endif
+
 # cs-trace - Standalone tracer
 CS_TRACE:=cs-trace
 CS_TRACE_FLAGS?=--export # --ksight
