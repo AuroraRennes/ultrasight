@@ -54,6 +54,25 @@ void cs_etb_flush_and_wait_stop(struct cs_devices_t *devices)
   }
 }
 
+/* Flush the TPIU and wait for the formatter to stop, ensuring no packet is lost. */
+void cs_tpiu_flush_and_wait_stop(struct cs_devices_t *devices)
+{
+  unsigned int status_val;
+  if (devices->tpiu != NULL) {
+    cs_device_set(devices->tpiu, CS_TPIU_FLFMT_CTRL,
+                  CS_TPIU_FLFMT_CTRL_StopFl | CS_TPIU_FLFMT_CTRL_FOnMan);
+    if (cs_device_wait(devices->tpiu, CS_TPIU_FLFMT_STATUS,
+                       CS_TPIU_FLFMT_STATUS_FtStopped,
+                       CS_REG_WAITBITS_ALL_1, 0, &status_val) != 0) {
+      fprintf(stderr,
+              "[!] TPIU flush did not complete. STS: 0x%08x\n",
+              status_val);
+    }
+  } else {
+    fprintf(stderr, "[!] TPIU is not present, flush cancelled.\n");
+  }
+}
+
 /**
  * Define the address ranges of the ETMv4 by configuring the address
  * comparators.
@@ -470,6 +489,9 @@ int disable_trace(const struct board *board, struct cs_devices_t *devices)
     cs_etb_flush_and_wait_stop(devices);
   }
 
+  cs_tpiu_flush_and_wait_stop(devices);
+  /* TPIU already flushed and stopped above, no cs_sink_disable needed */
+
   /* Disable source ETMs */
   for (i = 0; i < board->n_cpu; ++i) {
     cs_trace_disable(devices->ptm[i]);
@@ -488,15 +510,6 @@ int disable_trace(const struct board *board, struct cs_devices_t *devices)
   if (use_etr) {
     /* Disable the main sink (ETR) */
     cs_sink_disable(devices->etb);
-  }
-
-  /* Disable TPIU if needed */
-  if(devices->tpiu != NULL) {
-    if(cs_sink_disable(devices->tpiu)){
-      fprintf(stderr, "[!] Failed to disable TPIU\n");
-      return -1;
-    }
-    // printf("[+] TPIU disabled!\n");
   }
 
   /* If needed, show the ETM config */
@@ -597,15 +610,7 @@ int disable_trace_sinks_only(struct cs_devices_t *devices)
     /* Set FFCR:FlushMan bit to stop capture. */
     cs_etb_flush_and_wait_stop(devices);
   }
-
-  /* Disable TPIU if needed */
-  if(devices->tpiu != NULL) {
-    if(cs_sink_disable(devices->tpiu)){
-      fprintf(stderr, "[!] Failed to disable TPIU\n");
-      return -1;
-    }
-    // printf("[+] TPIU disabled!\n");
-  }
+  cs_tpiu_flush_and_wait_stop(devices);
 
   /* Disable intermediate sinks (ETFs) */
   // for (i = 0; i < devices->num_trace_sinks; i++) {
