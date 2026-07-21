@@ -115,6 +115,13 @@ static decoder_axi_t g_dec     = {0};
 static int count = 0;
 static int max_captures = 10;
 
+#ifdef TIMING
+/* Started on release (SIGCONT) in __afl_next_testcase, stopped/printed once
+   the exit status comes back in __afl_end_testcase, showing the actual wall time the
+   traced child spends running. */
+TS_DECL(target_exec);
+#endif
+
 /* --------------------------------------------------------------------------
  * Globals required by the coresight library
  * -------------------------------------------------------------------------- */
@@ -311,11 +318,10 @@ static pid_t __afl_next_testcase(void) {
   if (read(proxy_st_fd, &child_pid, 4) != 4) return -1;
 
   TS_STOP(pipe);
-  TS_PRINT(pipe, "initial pipe");
+  TS_PRINT(pipe, 0, "initial pipe");
 
   /* One-time board registration + ETM address filter */
   if (first_run) {
-    trace_cpu = 0;
     TS_DECL(init);
     TS_START(init);
     if (init_trace(fsrv_pid, child_pid) < 0) {
@@ -324,7 +330,7 @@ static pid_t __afl_next_testcase(void) {
       return -1;
     }
     TS_STOP(init);
-    TS_PRINT(init, "init_trace");
+    TS_PRINT(init, 0, "init_trace");
     first_run = 0;
 
     /* Set address range filter in PL decoder from /proc/<child>/maps */
@@ -355,7 +361,7 @@ static pid_t __afl_next_testcase(void) {
     return -1;
   }
   TS_STOP(start);
-  TS_PRINT(start, "start_trace");
+  TS_PRINT(start, 0, "start_trace");
 
 #ifdef STATS
   edge_stats_reset(&g_edge);
@@ -368,9 +374,10 @@ static pid_t __afl_next_testcase(void) {
   TS_START(next_pid);
   if (write(FORKSRV_FD + 1, &child_pid, 4) != 4) return -1;
   TS_STOP(next_pid);
-  TS_PRINT(next_pid, "next_pid");
+  TS_PRINT(next_pid, 0, "next_pid");
 
   /* Release child into main */
+  TS_START(target_exec);
   kill(child_pid, SIGCONT);
 
   return child_pid;
@@ -382,10 +389,12 @@ static int __afl_end_testcase(pid_t child_pid) {
 
   /* Wait for exit status from libforksrv */
   if (read(proxy_st_fd, &wstatus, 4) != 4) return -1;
+  TS_STOP(target_exec);
+  TS_PRINT(target_exec, 0, "target_exec");
 
-  TS_MEASURE(stop, "stop_trace",
+  TS_OPEN(stop, 0, "stop_trace");
   stop_trace(true);
-  );
+  TS_CLOSE(stop, 0, "stop_trace");
 
 #ifdef STATS
   /* Stop stats collection */
@@ -397,12 +406,12 @@ static int __afl_end_testcase(pid_t child_pid) {
   decoder_stats_print(&g_stats);
 #endif
 
-  TS_MEASURE(dma, "dma_transfer",
+  TS_MEASURE(dma, 0, "dma_transfer",
   if (bitmap_dma_transfer(&g_dma) < 0)
       fprintf(stderr, "[!] fuzzsight-proxy: bitmap_dma_transfer failed\n");
   );
 
-  TS_MEASURE(copy, "memcpy",
+  TS_MEASURE(copy, 0, "memcpy",
   memcpy(__afl_area_ptr, g_dma.buf, MAP_SIZE);
   );
 

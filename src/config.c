@@ -21,6 +21,7 @@
 
 #include "csregistration.h"
 #include "csregisters.h"
+#include "timing.h"
 
 #define SHOW_ETM_CONFIG 0
 
@@ -488,12 +489,14 @@ int enable_trace(const struct board *board, struct cs_devices_t *devices)
 
   /* Setup TPIU to export the trace to the PL.
    * WARNING: This requires the TPIU registers to be powered (i.e. a psu_init that includes TPIU) */
-  if(devices->tpiu != NULL) {
-    if(cs_sink_enable(devices->tpiu)){
-      fprintf(stderr, "[!] Failed to setup TPIU\n");
-    return -1;
+  TS_MEASURE(tpiu, 2, "enable: TPIU setup+enable",
+    if(devices->tpiu != NULL) {
+      if(cs_sink_enable(devices->tpiu)){
+        fprintf(stderr, "[!] Failed to setup TPIU\n");
+      return -1;
+      }
     }
-  }
+  );
 
   /* Setup and enable ETFs as HW FIFO sinks in the system (there are two on the
    * ZCU104) */
@@ -568,14 +571,18 @@ int disable_trace(const struct board *board, struct cs_devices_t *devices)
     cs_etb_flush_and_wait_stop(devices);
   }
 
-  cs_tpiu_flush_and_wait_stop(devices);
+  TS_MEASURE(tpiu_flush, 2, "flush: ETM->TPIU pipeline",
+    cs_tpiu_flush_and_wait_stop(devices);
+  );
   /* TPIU already flushed and stopped above, no cs_sink_disable needed */
 
   /* Disable trace source(s): ETM for the traced CPU, or every CPU */
   trace_cpu_range(board, &cpu_start, &cpu_end);
-  for (i = cpu_start; i < cpu_end; ++i) {
+  TS_MEASURE(etm_dis, 2, "disable: ETM traced",
+    for (i = cpu_start; i < cpu_end; ++i) {
       cs_trace_disable(devices->ptm[i]);
-  }
+    }
+  );
 
   /* Disable STM */
   if (use_stm) {

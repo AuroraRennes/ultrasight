@@ -42,6 +42,7 @@
 #include "config.h"
 #include "utils.h"
 #include "ksight.h"
+#include "timing.h"
 
 #define DEFAULT_UDMABUF_NUM 0
 #define DEFAULT_ETF_SIZE 0x1000
@@ -567,22 +568,28 @@ static int enable_cs_trace(pid_t pid)
       goto exit;
     }
     /* Enable ETMs and trace sinks for the first time */
-    if (enable_trace(board, &devices) < 0) {
-      fprintf(stderr, "[!] enable_trace() failed\n");
-      goto exit;
-    }
+    TS_MEASURE(enable, 1, "enable_trace",
+      if (enable_trace(board, &devices) < 0) {
+        fprintf(stderr, "[!] enable_trace() failed\n");
+        goto exit;
+      }
+    );
     is_first_trace = false;
   } else {
-    if (reconfigure_cid(board, &devices, pid) < 0) {
-      fprintf(stderr, "[!] reconfigure_cid() failed\n");
-      goto exit;
-    }
+    TS_MEASURE(reconf, 1, "reconfigure_cid",
+      if (reconfigure_cid(board, &devices, pid) < 0) {
+        fprintf(stderr, "[!] reconfigure_cid() failed\n");
+        goto exit;
+      }
+    );
     /* Enable trace sinks only once the ETMs enabled */
     // printf("[+] Enabling sinks only\n");
-    if (enable_trace(board, &devices) < 0) {
-      fprintf(stderr, "[!] enable_trace_sinks_only() failed\n");
-      goto exit;
-    }
+    TS_MEASURE(enable, 1, "enable_trace",
+      if (enable_trace(board, &devices) < 0) {
+        fprintf(stderr, "[!] enable_trace_sinks_only() failed\n");
+        goto exit;
+      }
+    );
   }
 
   /* Export the config in snapshot format if needed */
@@ -619,9 +626,11 @@ static int disable_cs_trace(bool disable_all)
   disable_trial = 0;
   while (disable_trial++ < TRACE_DISABLE_TRIAL) {
     if (disable_all) {
-      if ((ret = disable_trace(board, &devices)) < 0) {
-        fprintf(stderr, "[!] Try %d: disable_trace() failed\n", disable_trial);
-      }
+      TS_MEASURE(disable, 1, "disable_trace",
+        if ((ret = disable_trace(board, &devices)) < 0) {
+          fprintf(stderr, "[!] Try %d: disable_trace() failed\n", disable_trial);
+        }
+      );
     } else {
       // printf("[+] Disabling sinks only\n");
       if ((ret = disable_trace_sinks_only(&devices)) < 0) {
