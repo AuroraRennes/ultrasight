@@ -53,6 +53,44 @@ extern int trace_cpu;
 extern unsigned char *trace_bitmap;
 extern unsigned int trace_bitmap_size;
 
+/* CSV stats logging, off by default; set via -o/--csv=PATH. Appends one
+ * row per run so a benchmark suite can be run as repeated cs-trace
+ * invocations and compared afterwards. */
+static char *stats_csv_path = NULL;
+
+/**
+ * Appends one row of ETM decoder / edge / decoder-AXI stats to the CSV at
+ * `path`, writing a header line first if the file doesn't exist yet.
+ */
+static void write_stats_csv(const char *path, const char *binary_name,
+                             decoder_stats_t *etm, decoder_axi_t *axi,
+                             edge_stats_t *edge,
+                             double child_s, double instr_s, double global_s)
+{
+  int need_header = (access(path, F_OK) != 0);
+  FILE *f = fopen(path, "a");
+  if (!f) {
+    perror("[!] Could not open stats CSV for append");
+    return;
+  }
+  if (need_header) {
+    fprintf(f,
+            "binary,child_time_s,instr_time_s,global_time_s,"
+            "edges_total,edges_fifo_overflow,edges_freeze_drop,"
+            DECODER_STATS_CSV_HEADER "," DECODER_AXI_CSV_HEADER "\n");
+  }
+  fprintf(f, "%s,%.6f,%.6f,%.6f,%u,%u,%u,",
+          binary_name, child_s, instr_s, global_s,
+          edge_stats_read(edge, EDGE_STATS_TOTAL),
+          edge_stats_read(edge, EDGE_STATS_OVERFLOW),
+          edge_stats_read(edge, EDGE_STATS_FREEZE_DROP));
+  decoder_stats_write_csv_row(etm, f);
+  fprintf(f, ",");
+  decoder_axi_write_csv_row(axi, f);
+  fprintf(f, "\n");
+  fclose(f);
+}
+
 /**
  * Main logic, child is the traced program, parent controls the setup and
  * launches it.
@@ -90,7 +128,7 @@ void child(char *argv[])
  * then sending a CONT signal to the child. When the child stops, cleans up the
  * trace.
  */
-void parent(pid_t pid, int *child_status)
+void parent(pid_t pid, int *child_status, const char *binary_name)
 {
   int ret;
   int wstatus;
@@ -193,6 +231,23 @@ void parent(pid_t pid, int *child_status)
           edge_stats_print(&edge_handle);
           printf("============ DEC ERR ============\n");
           decoder_axi_print(&dec_axi_handle);
+
+          if (stats_csv_path) {
+            struct timespec csv_now;
+            clock_gettime(CLOCK_MONOTONIC, &csv_now);
+            double csv_child_s = (child_end.tv_sec - child_start.tv_sec) +
+                                  (child_end.tv_nsec - child_start.tv_nsec) / 1e9;
+            /* instr/global here are measured a little before the "official"
+             * timers below (which also cover the DMA readout that follows),
+             * so they'll read a touch lower -- fine for stats comparison. */
+            double csv_instr_s = (csv_now.tv_sec - instr_start.tv_sec) +
+                                  (csv_now.tv_nsec - instr_start.tv_nsec) / 1e9;
+            double csv_global_s = (csv_now.tv_sec - global_start.tv_sec) +
+                                   (csv_now.tv_nsec - global_start.tv_nsec) / 1e9;
+            write_stats_csv(stats_csv_path, binary_name, &dec_stats_etm_handle,
+                             &dec_axi_handle, &edge_handle,
+                             csv_child_s, csv_instr_s, csv_global_s);
+          }
 
           printf("============== DMA ==============\n");
           printf("[+] Triggering bitmap DMA readout\n");
@@ -309,11 +364,16 @@ static void usage(char *argv0)
           udmabuf_num);
   fprintf(stderr, "  -k, --ksight\t\tenable ksight kernel tag events tracing (default: %d)\n",
           ksight_on);
+  fprintf(stderr, "  -r, --useetr\t\tuse the ETR sink (in SDRAM), (default %d)\n",
+          ksight_on);
   fprintf(stderr,
           "  -v, --verbose[=INT]\t\tverbose output level (default: %d)\n",
           registration_verbose);
   fprintf(stderr, "  -n, --no-trace\t\tdisable tracing (default: %d)\n",
           no_trace);
+  fprintf(stderr,
+          "  -o, --csv=PATH\t\tappend decoder/edge stats as a CSV row to "
+          "PATH (default: disabled)\n");
   fprintf(stderr, "  -h, --help\t\t\tshow this help\n");
 }
 
@@ -330,8 +390,10 @@ int main(int argc, char *argv[])
       {"fetcher", no_argument, NULL, 'f'},
       {"udmabuf", required_argument, NULL, 'u'},
       {"ksight", no_argument, NULL, 'k'},
+      {"useetr", required_argument, NULL, 'r'},
       {"verbose", optional_argument, NULL, 'v'},
       {"notrace", optional_argument, NULL, 'n'},
+      {"csv", required_argument, NULL, 'o'},
       {"help", no_argument, NULL, 'h'},
       {0, 0, 0, 0},
   };
@@ -351,7 +413,7 @@ int main(int argc, char *argv[])
     exit(EXIT_SUCCESS);
   }
   /* Parse CLI elements */
-  while ((opt = getopt_long(argc, argv, "b:c:e:f:k:v:n::h", long_options,
+  while ((opt = getopt_long(argc, argv, "b:c:e:f:u:k:r:v:n::o:h", long_options,
                             &option_index)) != -1) {
     switch (opt) {
       /* Board name */
@@ -376,6 +438,9 @@ int main(int argc, char *argv[])
       case 'k':
         ksight_on = true;
         break;
+      case 'r':
+        use_etr = atoi(optarg);
+        break;
       /* Verbose option */
       case 'v':
         if (optarg) {
@@ -387,6 +452,10 @@ int main(int argc, char *argv[])
       /* No trace option */
       case 'n':
         no_trace = true;
+        break;
+      /* CSV stats output path */
+      case 'o':
+        stats_csv_path = optarg;
         break;
       /* Help display */
       case 'h':
@@ -422,7 +491,7 @@ int main(int argc, char *argv[])
       exit(EXIT_FAILURE);
       break;
     default:
-      parent(pid, NULL);
+      parent(pid, NULL, argvp[0]);
       wait(NULL);
       break;
   }

@@ -95,6 +95,10 @@ ifneq ($(strip $(BITMAP_CMP)),)
     CFLAGS += -DBITMAP_CMP
 endif
 
+ifneq ($(strip $(STATS)),)
+    CFLAGS += -DSTATS
+endif
+
 # cs-trace - Standalone tracer
 CS_TRACE:=cs-trace
 CS_TRACE_FLAGS?=--export # --ksight
@@ -183,7 +187,7 @@ debug: $(CS_TRACE) $(TESTS_DUMPS) disable_aslr
 
 proxy: $(LIBFORKSRV)
 	rm -f $(FUZZSIGHT_PROXY_OBJ) $(FUZZSIGHT_PROXY)
-	$(MAKE) $(FUZZSIGHT_PROXY) AFL_INC=$(AFL_INC) DEBUG=$(DEBUG) TIMING=$(TIMING)
+	$(MAKE) $(FUZZSIGHT_PROXY) AFL_INC=$(AFL_INC) DEBUG=$(DEBUG) TIMING=$(TIMING) STATS=$(STATS)
 
 # ----------------------------------------------------------------------------
 # Libraries

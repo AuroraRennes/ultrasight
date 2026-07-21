@@ -1,6 +1,8 @@
 #ifndef DECODER_AXI_H
 #define DECODER_AXI_H
 
+#include <inttypes.h>
+
 #include "axi_regs.h"
 
 #define DECODER_AXI_MAP_SIZE 0x1000
@@ -23,6 +25,12 @@ typedef enum {
     DECODER_AXI_RANGE_BASE_HI  = 0x1C, // Upper 32-bits of the base address
     DECODER_AXI_RANGE_END_LO   = 0x20, // Lower 32-bits of the end address
     DECODER_AXI_RANGE_END_HI   = 0x24, // Upper 32-bits of the end address
+    // 64-bit saturating count of raw trace bytes captured (4 bytes per
+    // valid TPIU word, before any downstream overflow/drop). Reading
+    // DECODER_AXI_BYTE_CNT_LO latches the high word for the next
+    // DECODER_AXI_BYTE_CNT_HI read, so always read LO then HI.
+    DECODER_AXI_BYTE_CNT_LO    = 0x28, // byte_count, lower 32 bits
+    DECODER_AXI_BYTE_CNT_HI    = 0x2C, // byte_count, upper 32 bits (latched at last LO read)
 } decoder_axi_reg_t;
 
 /* Control register bits */
@@ -78,6 +86,16 @@ static inline void decoder_axi_print_range(decoder_axi_t *handle) {
     fprintf(stderr, "[.] decoder range: 0x%016lx - 0x%016lx\n", base, end);
 }
 
+/* Raw trace byte count (64-bit, saturating). Must read LO before HI: the
+ * hardware latches the high word on the LO read so a lo-then-hi pair is
+ * always a consistent snapshot even though the counter keeps incrementing
+ * between the two AXI-Lite reads. */
+static inline uint64_t decoder_axi_read_byte_count(decoder_axi_t *handle) {
+    uint32_t lo = axi_regs_read(handle, DECODER_AXI_BYTE_CNT_LO);
+    uint32_t hi = axi_regs_read(handle, DECODER_AXI_BYTE_CNT_HI);
+    return ((uint64_t)hi << 32) | lo;
+}
+
 /* Description used in the print */
 static axi_reg_desc_t decoder_axi_descs[] = {
     {"Frame errors",          DECODER_AXI_FRAME},
@@ -86,8 +104,30 @@ static axi_reg_desc_t decoder_axi_descs[] = {
     {"ETM overflow packets",  DECODER_AXI_OVERFLOW},
 };
 
-static inline void decoder_axi_print(decoder_axi_t *h)
-    { axi_regs_print(h, decoder_axi_descs,
-                     sizeof(decoder_axi_descs) / sizeof(decoder_axi_descs[0])); }
+static inline void decoder_axi_print(decoder_axi_t *h) {
+    axi_regs_print(h, decoder_axi_descs,
+                    sizeof(decoder_axi_descs) / sizeof(decoder_axi_descs[0]));
+    fprintf(stderr, "  %-24s %" PRIu64 "\n", "Raw trace bytes",
+            decoder_axi_read_byte_count(h));
+}
+
+/* ------------------------------------------------------------------ */
+/* CSV export                                                          */
+/* ------------------------------------------------------------------ */
+
+#define DECODER_AXI_CSV_HEADER \
+    "frame_errors,bs_gen_errors,demux_errors,overflow_count,raw_trace_bytes"
+
+/* Appends one CSV row (no trailing newline) with the error counters and
+ * raw byte count from this block. */
+static inline void decoder_axi_write_csv_row(decoder_axi_t *h, FILE *f)
+{
+    fprintf(f, "%u,%u,%u,%u,%" PRIu64,
+            axi_regs_read(h, DECODER_AXI_FRAME),
+            axi_regs_read(h, DECODER_AXI_BS_GEN),
+            axi_regs_read(h, DECODER_AXI_DEMUX),
+            axi_regs_read(h, DECODER_AXI_OVERFLOW),
+            decoder_axi_read_byte_count(h));
+}
 
 #endif
