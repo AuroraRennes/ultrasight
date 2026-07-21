@@ -13,6 +13,8 @@
 #include <stdbool.h>
 #include <sys/types.h>
 
+#define DEFAULT_TRACE_CPU 0
+
 int get_trace_id(int cpu);
 int fetch_trace(void);
 int decode_trace(void);

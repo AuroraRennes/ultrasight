@@ -8,6 +8,10 @@
  * - Added comments for clarity
  */
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include "config.h"
 
 #include <stdio.h>
@@ -28,6 +32,7 @@ extern unsigned long etr_ram_addr;
 extern size_t etr_ram_size;
 extern int registration_verbose;
 extern bool use_etr;
+extern bool use_stm;
 
 /**
  * Set the ETB to manual flush and wait for the end of the trace.
@@ -302,9 +307,11 @@ int configure_trace(const struct board *board, struct cs_devices_t *devices,
   }
 
   /* Set STM trace ID */
-  if (cs_set_trace_source_id(devices->itm, 0x20) < 0) {
-    fprintf(stderr, "[!] Failed to set valid trace source ID STM\n");
-    return -1;
+  if (use_stm) {
+    if (cs_set_trace_source_id(devices->itm, 0x20) < 0) {
+      fprintf(stderr, "[!] Failed to set valid trace source ID STM\n");
+      return -1;
+    }
   }
 
   /* Permanently unlocks devices, starting from the top */
@@ -477,19 +484,24 @@ int enable_trace(const struct board *board, struct cs_devices_t *devices)
     }
   }
 
-  /* Enable sources, ETMs */
-  for (i = 0; i < board->n_cpu; ++i) {
-    cs_trace_enable(devices->ptm[i]);
-  }
+  /* Enable trace source(s): ETM for the traced CPU, or every CPU */
+  trace_cpu_range(board, &cpu_start, &cpu_end);
+  TS_MEASURE(etm_en, 2, "enable: ETM traced",
+    for (i = cpu_start; i < cpu_end; ++i) {
+      cs_trace_enable(devices->ptm[i]);
+    }
+  );
 
   /* Enable STM */
-  if (cs_trace_swstim_enable_all_ports(devices->itm) < 0) {
-    return -1;
+  if (use_stm) {
+    if (cs_trace_swstim_enable_all_ports(devices->itm) < 0) {
+      return -1;
+    }
+    if (cs_trace_swstim_set_sync_repeat(devices->itm, 32) < 0) {
+      return -1;
+    }
+    cs_trace_enable(devices->itm);
   }
-  if (cs_trace_swstim_set_sync_repeat(devices->itm, 32) < 0) {
-    return -1;
-  }
-  cs_trace_enable(devices->itm);
 
   /* Permanently unlocks devices, starting from the top */
   cs_checkpoint();
@@ -534,7 +546,9 @@ int disable_trace(const struct board *board, struct cs_devices_t *devices)
   }
 
   /* Disable STM */
-  cs_trace_disable(devices->itm);
+  if (use_stm) {
+    cs_trace_disable(devices->itm);
+  }
 
   /* Disable intermediate sinks (ETFs) */
   for (i = 0; i < devices->num_trace_sinks; i++) {

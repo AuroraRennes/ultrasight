@@ -43,7 +43,6 @@
 #include "utils.h"
 #include "ksight.h"
 
-#define DEFAULT_TRACE_CPU 0
 #define DEFAULT_UDMABUF_NUM 0
 #define DEFAULT_ETF_SIZE 0x1000
 #define DEFAULT_TRACE_SIZE 0x80000
@@ -93,6 +92,7 @@ int range_count = 0;
 struct map_info map_info[RANGE_MAX];
 
 bool use_etr = true;
+bool use_stm = true;
 bool fifo_sw = false;
 
 int fd = 0;

@@ -121,6 +121,7 @@ static int max_captures = 10;
 
 extern int            registration_verbose;
 extern bool           use_etr;
+extern bool           use_stm;
 extern char          *board_name;
 extern unsigned char *trace_bitmap;
 extern int            trace_bitmap_size;
@@ -481,6 +482,17 @@ static int __afl_end_testcase(pid_t child_pid) {
 #else
   use_etr = false;
 #endif
+
+  /* Skip STM enable/disable and ETF teardown to gain speed, and only
+     enable/disable the ETM for the traced CPU, not every CPU */
+  use_stm      = false;
+
+  /* Which CPU's ETM to trace. Set FUZZSIGHT_TRACE_CPU to match wherever the
+     proxy itself is pinned (e.g. via taskset), defaults to DEFAULT_TRACE_CPU. */
+  {
+    char *cpu_str = getenv("FUZZSIGHT_TRACE_CPU");
+    trace_cpu = cpu_str ? atoi(cpu_str) : DEFAULT_TRACE_CPU;
+  }
 
   /* Find -- separator */
   char **target_argv = NULL;

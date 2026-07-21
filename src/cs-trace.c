@@ -43,6 +43,7 @@
 #define DEFAULT_TRACE_BITMAP_SIZE (1U << (DEFAULT_TRACE_BITMAP_SIZE_POW2))
 extern int registration_verbose;
 extern bool use_etr;
+extern bool use_stm;
 extern char *board_name;
 extern bool export_config;
 extern bool fetcher_on;
@@ -366,6 +367,8 @@ static void usage(char *argv0)
           ksight_on);
   fprintf(stderr, "  -r, --useetr\t\tuse the ETR sink (in SDRAM), (default %d)\n",
           ksight_on);
+  fprintf(stderr, "  -s, --usestm\t\tenable STM/ITM tracing (default %d)\n",
+          use_stm);
   fprintf(stderr,
           "  -v, --verbose[=INT]\t\tverbose output level (default: %d)\n",
           registration_verbose);
@@ -391,6 +394,7 @@ int main(int argc, char *argv[])
       {"udmabuf", required_argument, NULL, 'u'},
       {"ksight", no_argument, NULL, 'k'},
       {"useetr", required_argument, NULL, 'r'},
+      {"usestm", required_argument, NULL, 's'},
       {"verbose", optional_argument, NULL, 'v'},
       {"notrace", optional_argument, NULL, 'n'},
       {"csv", required_argument, NULL, 'o'},
@@ -413,7 +417,7 @@ int main(int argc, char *argv[])
     exit(EXIT_SUCCESS);
   }
   /* Parse CLI elements */
-  while ((opt = getopt_long(argc, argv, "b:c:e:f:u:k:r:v:n::o:h", long_options,
+  while ((opt = getopt_long(argc, argv, "b:c:e:f:u:k:r:s:v:n::o:h", long_options,
                             &option_index)) != -1) {
     switch (opt) {
       /* Board name */
@@ -440,6 +444,9 @@ int main(int argc, char *argv[])
         break;
       case 'r':
         use_etr = atoi(optarg);
+        break;
+      case 's':
+        use_stm = atoi(optarg);
         break;
       /* Verbose option */
       case 'v':
