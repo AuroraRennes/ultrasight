@@ -34,6 +34,24 @@ extern int registration_verbose;
 extern bool use_etr;
 extern bool use_stm;
 extern bool teardown_etf;
+extern bool single_cpu;
+extern int trace_cpu;
+
+/**
+ * CPU indices to iterate over when registering/enabling/disabling ETMs:
+ * [trace_cpu, trace_cpu+1) when single_cpu is set, [0, board->n_cpu)
+ * otherwise.
+ */
+static void trace_cpu_range(const struct board *board, int *start, int *end)
+{
+  if (single_cpu) {
+    *start = trace_cpu;
+    *end   = trace_cpu + 1;
+  } else {
+    *start = 0;
+    *end   = board->n_cpu;
+  }
+}
 
 /**
  * Set the ETB to manual flush and wait for the end of the trace.
@@ -275,6 +293,7 @@ int configure_trace(const struct board *board, struct cs_devices_t *devices,
                     struct map_info *range, int range_count, pid_t pid)
 {
   int i, r, error_count;
+  int cpu_start, cpu_end;
 
   if (!board || !devices) {
     fprintf(stderr, "[!] Board or devices empty\n");
@@ -288,9 +307,11 @@ int configure_trace(const struct board *board, struct cs_devices_t *devices,
     /* While programming, ensure we are not collecting trace to the main buffer */
     cs_sink_disable(devices->etb);
   }
-  /* Check all PTMs */
-  for (i = 0; i < board->n_cpu; ++i) {
-    /* Try to get the cpu, attribute an ID, and initialize the ETM */
+
+  trace_cpu_range(board, &cpu_start, &cpu_end);
+
+  /* Register and initialize the ETM for each CPU in range */
+  for (i = cpu_start; i < cpu_end; ++i) {
     devices->ptm[i] = cs_cpu_get_device(i, CS_DEVCLASS_SOURCE);
     if (devices->ptm[i] == CS_ERRDESC) {
       fprintf(stderr, "[!] Failed to get trace source for CPU #%d\n", i);
@@ -318,8 +339,9 @@ int configure_trace(const struct board *board, struct cs_devices_t *devices,
   /* Permanently unlocks devices, starting from the top */
   cs_checkpoint();
 
-  /* Check that all ETMs use version 4 */
-  for (i = 0; i < board->n_cpu; ++i) {
+  /* Check that each ETM in range uses version 4; skip and warn otherwise */
+  r = 0;
+  for (i = cpu_start; i < cpu_end; ++i) {
     if (CS_ETMVERSION_MAJOR(cs_etm_get_version(devices->ptm[i])) >=
         CS_ETMVERSION_ETMv4) {
       r = configure_etmv4_addr_range_cid(devices->ptm[i], range, range_count,
@@ -364,8 +386,11 @@ int reconfigure_cid(const struct board *board, struct cs_devices_t *devices, pid
 {
     int error_count;
     size_t cididx = 0;
+    int cpu_start, cpu_end;
 
-    for (int i = 0; i < board->n_cpu; i++) {
+    trace_cpu_range(board, &cpu_start, &cpu_end);
+
+    for (int i = cpu_start; i < cpu_end; i++) {
         cs_etmv4_config_t tconfig;
         cs_device_t etm = devices->ptm[i];
 
@@ -404,11 +429,14 @@ int reconfigure_cid(const struct board *board, struct cs_devices_t *devices, pid
  */
 int set_etm_bb_mode(const struct board *board, struct cs_devices_t *devices, int bb_mode)
 {
-    int i, error_count;
+    int error_count;
+    int cpu_start, cpu_end;
 
     if (!board || !devices) return -1;
 
-    for (i = 0; i < board->n_cpu; i++) {
+    trace_cpu_range(board, &cpu_start, &cpu_end);
+
+    for (int i = cpu_start; i < cpu_end; i++) {
         cs_etmv4_config_t tconfig;
         cs_device_t etm = devices->ptm[i];
 
@@ -438,6 +466,7 @@ int set_etm_bb_mode(const struct board *board, struct cs_devices_t *devices, int
 int enable_trace(const struct board *board, struct cs_devices_t *devices)
 {
   int i, error_count;
+  int cpu_start, cpu_end;
 
   /* Sanity check */
   if (!board || !devices) {
@@ -528,6 +557,7 @@ int enable_trace(const struct board *board, struct cs_devices_t *devices)
 int disable_trace(const struct board *board, struct cs_devices_t *devices)
 {
   int i, error_count;
+  int cpu_start, cpu_end;
 
   if (!board || !devices) {
     return -1;
@@ -541,9 +571,10 @@ int disable_trace(const struct board *board, struct cs_devices_t *devices)
   cs_tpiu_flush_and_wait_stop(devices);
   /* TPIU already flushed and stopped above, no cs_sink_disable needed */
 
-  /* Disable source ETMs */
-  for (i = 0; i < board->n_cpu; ++i) {
-    cs_trace_disable(devices->ptm[i]);
+  /* Disable trace source(s): ETM for the traced CPU, or every CPU */
+  trace_cpu_range(board, &cpu_start, &cpu_end);
+  for (i = cpu_start; i < cpu_end; ++i) {
+      cs_trace_disable(devices->ptm[i]);
   }
 
   /* Disable STM */
@@ -567,7 +598,7 @@ int disable_trace(const struct board *board, struct cs_devices_t *devices)
 
   /* If needed, show the ETM config */
   if (registration_verbose > 1) {
-    for (i = 0; i < board->n_cpu; ++i) {
+    for (i = cpu_start; i < cpu_end; ++i) {
       show_etm_config(devices->ptm[i]);
     }
   }

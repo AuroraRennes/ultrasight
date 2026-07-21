@@ -123,6 +123,7 @@ extern int            registration_verbose;
 extern bool           use_etr;
 extern bool           use_stm;
 extern bool           teardown_etf;
+extern bool           single_cpu;
 extern char          *board_name;
 extern unsigned char *trace_bitmap;
 extern int            trace_bitmap_size;
@@ -488,6 +489,7 @@ static int __afl_end_testcase(pid_t child_pid) {
      enable/disable the ETM for the traced CPU, not every CPU */
   use_stm      = false;
   teardown_etf = false;
+  single_cpu   = true;
 
   /* Which CPU's ETM to trace. Set FUZZSIGHT_TRACE_CPU to match wherever the
      proxy itself is pinned (e.g. via taskset), defaults to DEFAULT_TRACE_CPU. */

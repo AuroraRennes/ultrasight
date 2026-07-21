@@ -94,6 +94,7 @@ struct map_info map_info[RANGE_MAX];
 bool use_etr = true;
 bool use_stm = true;
 bool teardown_etf = true;
+bool single_cpu = false;
 bool fifo_sw = false;
 
 int fd = 0;

@@ -45,6 +45,7 @@ extern int registration_verbose;
 extern bool use_etr;
 extern bool use_stm;
 extern bool teardown_etf;
+extern bool single_cpu;
 extern char *board_name;
 extern bool export_config;
 extern bool fetcher_on;
@@ -372,6 +373,8 @@ static void usage(char *argv0)
           use_stm);
   fprintf(stderr, "  -t, --teardownetf\t\tdisable ETFs on trace teardown (default %d)\n",
           teardown_etf);
+  fprintf(stderr, "  -m, --singlecpu\t\tonly enable/disable the traced CPU's ETM, not every CPU (default %d)\n",
+          single_cpu);
   fprintf(stderr,
           "  -v, --verbose[=INT]\t\tverbose output level (default: %d)\n",
           registration_verbose);
@@ -399,6 +402,7 @@ int main(int argc, char *argv[])
       {"useetr", required_argument, NULL, 'r'},
       {"usestm", required_argument, NULL, 's'},
       {"teardownetf", required_argument, NULL, 't'},
+      {"singlecpu", required_argument, NULL, 'm'},
       {"verbose", optional_argument, NULL, 'v'},
       {"notrace", optional_argument, NULL, 'n'},
       {"csv", required_argument, NULL, 'o'},
@@ -421,7 +425,7 @@ int main(int argc, char *argv[])
     exit(EXIT_SUCCESS);
   }
   /* Parse CLI elements */
-  while ((opt = getopt_long(argc, argv, "b:c:e:f:u:k:r:s:t:v:n::o:h", long_options,
+  while ((opt = getopt_long(argc, argv, "b:c:e:f:u:k:r:s:t:m:v:n::o:h", long_options,
                             &option_index)) != -1) {
     switch (opt) {
       /* Board name */
@@ -454,6 +458,9 @@ int main(int argc, char *argv[])
         break;
       case 't':
         teardown_etf = atoi(optarg);
+        break;
+      case 'm':
+        single_cpu = atoi(optarg);
         break;
       /* Verbose option */
       case 'v':
