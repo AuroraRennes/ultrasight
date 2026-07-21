@@ -386,7 +386,7 @@ static int __afl_end_testcase(pid_t child_pid) {
 
 #ifdef STATS
   /* Stop stats collection */
-  decoder_stats_enable(&g_stats);
+  decoder_stats_disable(&g_stats);
 
   /* Print edge, decoder errors and decoder stats */
   edge_stats_print(&g_edge);
@@ -415,6 +415,8 @@ static int __afl_end_testcase(pid_t child_pid) {
       memcpy(ref_bitmap, bitmap, MAP_SIZE);
       ref_bitmap_set = 1;
       fprintf(stderr, "[.] reference bitmap stored\n");
+      edge_stats_print(&g_edge);
+      decoder_axi_print(&g_dec);
       export_trace_with_config(count);
       count++;
   } else {
@@ -429,6 +431,8 @@ static int __afl_end_testcase(pid_t child_pid) {
         }
         fprintf(stderr, "Total diff edges: %d\n", diff_count);
 
+        edge_stats_print(&g_edge);
+        decoder_axi_print(&g_dec);
         if (count <= max_captures) {
           export_trace_with_config(count);
           count++;

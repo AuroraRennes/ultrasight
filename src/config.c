@@ -389,6 +389,42 @@ int reconfigure_cid(const struct board *board, struct cs_devices_t *devices, pid
 }
 
 /**
+ * Switch ETM branch broadcast mode (bb_mode).
+ * bb_mode=1 -> branch broadcast enabled (address mode, like 0x4C000050)
+ * bb_mode=0 -> atom mode (like 0x4C000040)
+ * Must be called only when tracing is stopped.
+ */
+int set_etm_bb_mode(const struct board *board, struct cs_devices_t *devices, int bb_mode)
+{
+    int i, error_count;
+
+    if (!board || !devices) return -1;
+
+    for (i = 0; i < board->n_cpu; i++) {
+        cs_etmv4_config_t tconfig;
+        cs_device_t etm = devices->ptm[i];
+
+        cs_etm_config_init_ex(etm, &tconfig);
+        tconfig.flags = CS_ETMC_CONFIG;
+        cs_etm_config_get_ex(etm, &tconfig);
+
+        tconfig.configr.bits.bb = bb_mode ? 1 : 0;
+
+        tconfig.flags = CS_ETMC_CONFIG;
+        cs_etm_config_put_ex(etm, &tconfig);
+    }
+
+    error_count = cs_error_count();
+    if (error_count > 0) {
+        fprintf(stderr, "[!] %d errors setting bb_mode=%d\n", error_count, bb_mode);
+        return -1;
+    }
+
+    return 0;
+}
+
+
+/**
  * Trace enable, setting up and enabling ETR, ETF
  */
 int enable_trace(const struct board *board, struct cs_devices_t *devices)
@@ -503,7 +539,7 @@ int disable_trace(const struct board *board, struct cs_devices_t *devices)
   /* Disable intermediate sinks (ETFs) */
   for (i = 0; i < devices->num_trace_sinks; i++) {
     if (devices->trace_sinks[i]) {
-      cs_sink_disable(devices->trace_sinks[i]);
+      cs_tmc_hw_fifo_disable(devices->trace_sinks[i]);
     }
   }
 

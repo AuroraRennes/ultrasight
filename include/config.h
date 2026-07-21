@@ -18,5 +18,6 @@ int disable_trace(const struct board *board, struct cs_devices_t *devices);
 int enable_trace_sinks_only(const struct board *board, struct cs_devices_t *devices);
 int disable_trace_sinks_only(struct cs_devices_t *devices);
 int reconfigure_cid(const struct board *board, struct cs_devices_t *devices, pid_t pid);
+int set_etm_bb_mode(const struct board *board, struct cs_devices_t *devices, int bb_mode);
 
 #endif /* CS_TRACE_CONFIG_H */
