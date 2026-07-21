@@ -33,6 +33,7 @@ extern size_t etr_ram_size;
 extern int registration_verbose;
 extern bool use_etr;
 extern bool use_stm;
+extern bool teardown_etf;
 
 /**
  * Set the ETB to manual flush and wait for the end of the trace.
@@ -551,9 +552,11 @@ int disable_trace(const struct board *board, struct cs_devices_t *devices)
   }
 
   /* Disable intermediate sinks (ETFs) */
-  for (i = 0; i < devices->num_trace_sinks; i++) {
-    if (devices->trace_sinks[i]) {
-      cs_tmc_hw_fifo_disable(devices->trace_sinks[i]);
+  if (teardown_etf) {
+    for (i = 0; i < devices->num_trace_sinks; i++) {
+      if (devices->trace_sinks[i]) {
+        cs_tmc_hw_fifo_disable(devices->trace_sinks[i]);
+      }
     }
   }
 
