@@ -131,6 +131,7 @@ extern bool           use_etr;
 extern bool           use_stm;
 extern bool           teardown_etf;
 extern bool           single_cpu;
+extern bool           branch_broadcast;
 extern char          *board_name;
 extern unsigned char *trace_bitmap;
 extern int            trace_bitmap_size;

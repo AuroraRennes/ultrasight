@@ -96,6 +96,7 @@ bool use_etr = true;
 bool use_stm = true;
 bool teardown_etf = true;
 bool single_cpu = false;
+bool branch_broadcast = true;
 bool fifo_sw = false;
 
 int fd = 0;

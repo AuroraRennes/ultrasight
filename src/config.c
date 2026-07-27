@@ -26,7 +26,6 @@
 #define SHOW_ETM_CONFIG 0
 
 const bool return_stack = false;
-const bool branch_broadcast = true;
 const bool cycle_count = false;
 
 extern unsigned long etr_ram_addr;
@@ -36,6 +35,7 @@ extern bool use_etr;
 extern bool use_stm;
 extern bool teardown_etf;
 extern bool single_cpu;
+extern bool branch_broadcast;
 extern int trace_cpu;
 
 /**
@@ -167,8 +167,11 @@ static int configure_etmv4_addr_range_cid(cs_device_t etm,
    *    - cycle count: add cycle counting packets
    */
   if (return_stack) tconfig.configr.bits.rs = 1; /* set the return stack */
-  if (branch_broadcast)
-    tconfig.configr.bits.bb = 1;                 /* set the branch broadcast */
+  if (branch_broadcast) {
+    tconfig.configr.bits.bb = 1; /* set the branch broadcast */
+  } else {
+    tconfig.configr.bits.bb = 0; /* clear the branch broadcast */
+  }
   if (cycle_count) tconfig.configr.bits.cci = 1; /* set the cycle count */
 
   /* If a context id is specified, set up the comparator */
