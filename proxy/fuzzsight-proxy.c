@@ -37,7 +37,9 @@
 
    One-time setup (before __afl_start_forkserver):
      - decoder_stats_open() AXI-Lite ETM statistics handle  - TODO: add an option to disable
-     - edge_stats_open()    AXI-Lite edge statistics handle - TODO: add an option to disable
+     - edge_extractor_open() AXI-Lite edge statistics handle - TODO: add an option to disable
+     - edge_extractor_set_hash_mode() select FuzzSight edge hashing, once
+       (must happen between execution sessions, so before the forkserver loop)
      - bitmap_dma_open()  udmabuf DMA handle
 
    First iteration only (deferred until child PID is known):
@@ -76,7 +78,7 @@
 #include "bitmap_dma.h"
 #include "decoder_stats.h"
 #include "decoder_axi.h"
-#include "edge_stats.h"
+#include "edge_extractor.h"
 #include "common.h"
 #include "timing.h"
 
@@ -108,7 +110,7 @@ u8 first_dump = 1;
 
 
 static decoder_stats_t g_stats = {0};
-static edge_stats_t g_edge     = {0};
+static edge_extractor_t g_edge = {0};
 static bitmap_dma_t g_dma      = {0};
 static decoder_axi_t g_dec     = {0};
 
@@ -365,7 +367,7 @@ static pid_t __afl_next_testcase(void) {
   TS_PRINT(start, 0, "start_trace");
 
 #ifdef STATS
-  edge_stats_reset(&g_edge);
+  edge_extractor_reset(&g_edge);
   decoder_axi_stats_reset(&g_dec);
   decoder_stats_enable(&g_stats);
 #endif
@@ -402,7 +404,7 @@ static int __afl_end_testcase(pid_t child_pid) {
   decoder_stats_disable(&g_stats);
 
   /* Print edge, decoder errors and decoder stats */
-  edge_stats_print(&g_edge);
+  edge_extractor_print(&g_edge);
   decoder_axi_print(&g_dec);
   decoder_stats_print(&g_stats);
 #endif
@@ -428,7 +430,7 @@ static int __afl_end_testcase(pid_t child_pid) {
       memcpy(ref_bitmap, bitmap, MAP_SIZE);
       ref_bitmap_set = 1;
       fprintf(stderr, "[.] reference bitmap stored\n");
-      edge_stats_print(&g_edge);
+      edge_extractor_print(&g_edge);
       decoder_axi_print(&g_dec);
       export_trace_with_config(count);
       count++;
@@ -444,7 +446,7 @@ static int __afl_end_testcase(pid_t child_pid) {
         }
         fprintf(stderr, "Total diff edges: %d\n", diff_count);
 
-        edge_stats_print(&g_edge);
+        edge_extractor_print(&g_edge);
         decoder_axi_print(&g_dec);
         if (count <= max_captures) {
           export_trace_with_config(count);
@@ -528,8 +530,11 @@ static int __afl_end_testcase(pid_t child_pid) {
 
   if (decoder_stats_open(&g_stats) < 0)
     perror("[!] fuzzsight-proxy: decoder_stats_open");
-  if (edge_stats_open(&g_edge) < 0)
-    perror("[!] fuzzsight-proxy: edge_stats_open");
+  if (edge_extractor_open(&g_edge) < 0)
+    perror("[!] fuzzsight-proxy: edge_extractor_open");
+  /* One-time hash mode select: must happen between execution sessions, so
+     before the forkserver loop starts any tracing. */
+  edge_extractor_set_hash_mode(&g_edge, EDGE_HASH_FUZZSIGHT);
   if(decoder_axi_open(&g_dec))
     perror("[!] fuzzsight-proxy: decoder_axi_open");
   if (bitmap_dma_open(&g_dma, MAP_SIZE) < 0) {
@@ -565,7 +570,7 @@ static int __afl_end_testcase(pid_t child_pid) {
   /* Teardown */
   fini_trace();
   decoder_stats_close(&g_stats);
-  edge_stats_close(&g_edge);
+  edge_extractor_close(&g_edge);
   bitmap_dma_close(&g_dma);
 
   return 0;

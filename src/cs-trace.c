@@ -32,7 +32,7 @@
 #include "common.h"
 #include "config.h"
 #include "decoder_stats.h"
-#include "edge_stats.h"
+#include "edge_extractor.h"
 #include "bitmap_dma.h"
 #include "decoder_axi.h"
 
@@ -68,7 +68,7 @@ static char *stats_csv_path = NULL;
  */
 static void write_stats_csv(const char *path, const char *binary_name,
                              decoder_stats_t *etm, decoder_axi_t *axi,
-                             edge_stats_t *edge,
+                             edge_extractor_t *edge,
                              double child_s, double instr_s, double global_s)
 {
   int need_header = (access(path, F_OK) != 0);
@@ -85,9 +85,9 @@ static void write_stats_csv(const char *path, const char *binary_name,
   }
   fprintf(f, "%s,%.6f,%.6f,%.6f,%u,%u,%u,",
           binary_name, child_s, instr_s, global_s,
-          edge_stats_read(edge, EDGE_STATS_TOTAL),
-          edge_stats_read(edge, EDGE_STATS_OVERFLOW),
-          edge_stats_read(edge, EDGE_STATS_FREEZE_DROP));
+          edge_extractor_read(edge, EDGE_EXTRACTOR_TOTAL),
+          edge_extractor_read(edge, EDGE_EXTRACTOR_OVERFLOW),
+          edge_extractor_read(edge, EDGE_EXTRACTOR_FREEZE_DROP));
   decoder_stats_write_csv_row(etm, f);
   fprintf(f, ",");
   decoder_axi_write_csv_row(axi, f);
@@ -141,7 +141,7 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
   struct timespec child_start, child_end;
   double child_elapsed = 0.0, instr_elapsed = 0.0, global_elapsed = 0.0;
   decoder_stats_t dec_stats_etm_handle, dec_stats_stm_handle;
-  edge_stats_t edge_handle;
+  edge_extractor_t edge_handle;
   bitmap_dma_t dma_handle;
   decoder_axi_t dec_axi_handle;
 
@@ -177,7 +177,7 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
       ret = decoder_stats_open(&dec_stats_etm_handle);
       if (ret < 0) perror("[!] ETM AXI stats mapping issue");
 
-      ret = edge_stats_open(&edge_handle);
+      ret = edge_extractor_open(&edge_handle);
       if (ret < 0) perror("[!] EDGE AXI stats mapping issue");
 
       ret = bitmap_dma_open(&dma_handle, DEFAULT_TRACE_BITMAP_SIZE);
@@ -188,7 +188,7 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
 
       // decoder_axi_soft_reset(&dec_axi_handle);
       decoder_stats_enable(&dec_stats_etm_handle);
-      edge_stats_reset(&edge_handle);
+      edge_extractor_reset(&edge_handle);
       decoder_axi_stats_reset(&dec_axi_handle);
       bitmap_dma_transfer(&dma_handle); // Clearing DMA
 
@@ -232,7 +232,7 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
           printf("========== DEC STATS ============\n");
           decoder_stats_print(&dec_stats_etm_handle);
           printf("============= EDGES =============\n");
-          edge_stats_print(&edge_handle);
+          edge_extractor_print(&edge_handle);
           printf("============ DEC ERR ============\n");
           decoder_axi_print(&dec_axi_handle);
 
@@ -286,7 +286,7 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
 
 
           decoder_stats_close(&dec_stats_etm_handle);
-          edge_stats_close(&edge_handle);
+          edge_extractor_close(&edge_handle);
           decoder_axi_close(&dec_axi_handle);
 
           /* Instrumentation timer ends after full teardown */

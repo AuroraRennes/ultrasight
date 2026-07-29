@@ -9,7 +9,7 @@
 
 // Default base addresses (can/should be overridden)
 #ifndef DECODER_STATS_BASE_ETM
-#pragma message("WARNING: EDGE_STATS_BASE not defined, using placeholder 0x80000000 - override for your Vivado project")
+#pragma message("WARNING: DECODER_STATS_BASE_ETM not defined, using placeholder 0x80000000 - override for your Vivado project")
 #define DECODER_STATS_BASE_ETM 0x80020000
 #endif
 

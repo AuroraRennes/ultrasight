@@ -61,7 +61,7 @@ HDRS:= \
 	$(INC)/ksight.h \
 	$(INC)/axi_regs.h \
 	$(INC)/decoder_stats.h \
-	$(INC)/edge_stats.h \
+	$(INC)/edge_extractor.h \
 	$(INC)/bitmap_dma.h \
 	$(INC)/decoder_axi.h \
 	$(INC)/timing.h \

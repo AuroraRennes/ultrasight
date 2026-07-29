@@ -9,7 +9,7 @@
 
 // Default base addresses (can/should be overridden)
 #ifndef DECODER_AXI_BASE
-#pragma message("WARNING: EDGE_STATS_BASE not defined, using placeholder 0x80000000 - override for your Vivado project")
+#pragma message("WARNING: DECODER_AXI_BASE not defined, using placeholder 0x80000000 - override for your Vivado project")
 #define DECODER_AXI_BASE 0x80022000
 #endif
 
