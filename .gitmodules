@@ -1,4 +1,7 @@
 [submodule "csal"]
 	path = csal
-	url = git@github.com:AuroraRennes/csal.git
-	branch = zcu-104
+	url = git@github.com:AuroraRennes/CSAL.git
+	branch = master
+[submodule "tracecliff"]
+	path = tracecliff
+	url = git@github.com:AuroraRennes/tracecliff.git
