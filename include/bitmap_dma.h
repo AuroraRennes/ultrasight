@@ -2,6 +2,8 @@
 #ifndef BITMAP_DMA_H
 #define BITMAP_DMA_H
 
+#include <stdint.h>
+#include <stddef.h>
 #include "axi_regs.h"
 
 // AXI DMA registers (S2MM only)
@@ -19,24 +21,30 @@
 #define ENABLE_ALL_IRQ              0x00007000
 
 #ifndef DMA_BASE
-#pragma message("WARNING: DMA_BASE not defined, using placeholder")
+#pragma message("WARNING: DMA_BASE not defined, using placeholder - override for your Vivado project")
 #define DMA_BASE 0x80000000
 #endif
 
 #ifndef UDMABUF_DST
 #pragma message("WARNING: UDMABUF_DST not defined, using placeholder")
-#define UDMABUF_DST 0x68000000
+#define UDMABUF_DST 0x60000000
+#endif
+
+#ifndef UDMABUF_DEV
+#pragma message("WARNING: UDMABUF_DEV not defined, using placeholder")
+#define UDMABUF_DEV "/dev/udmabuf0"
 #endif
 
 // Bitmap reader AXI-Lite
 #define BITMAP_READER_MAP_SIZE      0x1000
 #define BITMAP_READER_CTRL          0x00
 #define BITMAP_READER_STATUS        0x04
-#define STATUS_DMA_DONE             (1 << 0)
-#define STATUS_DMA_BUSY             (1 << 1)
+#define CTRL_DMA_REQ                (1 << 0)  // ctrl:   trigger the readout
+#define STATUS_DMA_DONE             (1 << 0)  // status: readout complete
+#define STATUS_DMA_BUSY             (1 << 1)  // status: readout in progress
 
 #ifndef BITMAP_READER_BASE
-#pragma message("WARNING: BITMAP_READER_BASE not defined, using placeholder")
+#pragma message("WARNING: BITMAP_READER_BASE not defined, using placeholder - override for your Vivado project")
 #define BITMAP_READER_BASE 0x80010000
 #endif
 

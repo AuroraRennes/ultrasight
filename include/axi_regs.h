@@ -1,8 +1,8 @@
 #ifndef AXI_REGS_H
 #define AXI_REGS_H
 
-#include <stddef.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <stdio.h>
 
 /* Main information, file descriptor, address+size and register offsets */

@@ -7,16 +7,17 @@
 
 // Default base addresses (can/should be overridden)
 #ifndef EDGE_EXTRACTOR_BASE
-#pragma message("WARNING: EDGE_EXTRACTOR_BASE not defined, using placeholder 0x80000000 - override for your Vivado project")
-#define EDGE_EXTRACTOR_BASE 0x80000000
+#pragma message("WARNING: EDGE_EXTRACTOR_BASE not defined, using placeholder 0x80021000 - override for your Vivado project")
+#define EDGE_EXTRACTOR_BASE 0x80021000
 #endif
 
 /* Register offsets */
 typedef enum {
     EDGE_EXTRACTOR_CTRL        = 0x00,  // bit 0 = stats_reset, [2:1] = hash_mode, bit 3 = hash_mode_we
-    EDGE_EXTRACTOR_TOTAL       = 0x04,  // edges_total
-    EDGE_EXTRACTOR_OVERFLOW    = 0x08,  // fifo_overflow_count
-    EDGE_EXTRACTOR_FREEZE_DROP = 0x0C,  // freeze_drop_count
+    EDGE_EXTRACTOR_TOTAL_LO    = 0x04,  // edges_total, lower 32 bits
+    EDGE_EXTRACTOR_TOTAL_HI    = 0x08,  // edges_total, upper 32 bits (latched at last LO read)
+    EDGE_EXTRACTOR_OVERFLOW    = 0x0C,  // fifo_overflow_count
+    EDGE_EXTRACTOR_FREEZE_DROP = 0x10,  // freeze_drop_count
 } edge_extractor_reg_t;
 
 /* Control register bits */
@@ -62,10 +63,19 @@ static inline edge_hash_mode_t edge_extractor_get_hash_mode(edge_extractor_t *ha
 
 /* Description used in the print */
 static axi_reg_desc_t edge_extractor_descs[] = {
-    {"Edges total",  EDGE_EXTRACTOR_TOTAL},
+    {"Edges total (lo)", EDGE_EXTRACTOR_TOTAL_LO},
     {"FIFO overflow", EDGE_EXTRACTOR_OVERFLOW},
     {"Freeze drops",  EDGE_EXTRACTOR_FREEZE_DROP},
 };
+
+/* Full 64-bit edges_total. The hardware latches the high word on the LO read
+ * so a lo-then-hi pair is a consistent snapshot even though the counter keeps
+ * running between the two AXI-Lite reads. */
+static inline uint64_t edge_extractor_read_edges_total(edge_extractor_t *handle) {
+    uint32_t lo = axi_regs_read(handle, EDGE_EXTRACTOR_TOTAL_LO);
+    uint32_t hi = axi_regs_read(handle, EDGE_EXTRACTOR_TOTAL_HI);
+    return ((uint64_t)hi << 32) | lo;
+}
 
 static inline void edge_extractor_print(edge_extractor_t *h)
     { axi_regs_print(h, edge_extractor_descs,

@@ -54,12 +54,35 @@ $ cat /sys/class/u-dma-buf/udmabuf0/size
 
 #### Build
 
+Initialize the repository:
+
 ```bash
 $ git clone https://github.com/QDucasse/ultrasight
 $ cd ultrasight
 $ git submodule update --init
-$ make trace
 ```
+
+Then, get the correct headers for the fuzzsight Vivado project:
+
+```bash
+$ make bd-addrs-apply FUZZSIGHT_DIR=/path/to/fuzzsight
+
+  MACRO                    BLOCK DESIGN   HEADER         STATUS
+  DMA_BASE                 0x80000000     0x80000000     ok
+  BITMAP_READER_BASE       0x80010000     0x80000000     ok
+  DECODER_STATS_BASE_ETM   0x80020000     0x80020000     ok
+  EDGE_EXTRACTOR_BASE      0x80021000     0x80021000     ok
+  DECODER_AXI_BASE         0x80022000     0x80022000     ok
+```
+
+> **Note:** `bd-addrs` simply displays them and `sync-headers` copy any changes in the project to here
+
+You can then build with:
+
+```bash
+$ make trace // runs cs-trace on tests/fib
+```
+
 
 #### Trace decoding using [OpenCSD](https://github.com/Linaro/OpenCSD)
 

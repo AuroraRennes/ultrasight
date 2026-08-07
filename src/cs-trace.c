@@ -83,9 +83,11 @@ static void write_stats_csv(const char *path, const char *binary_name,
             "edges_total,edges_fifo_overflow,edges_freeze_drop,"
             DECODER_STATS_CSV_HEADER "," DECODER_AXI_CSV_HEADER "\n");
   }
-  fprintf(f, "%s,%.6f,%.6f,%.6f,%u,%u,%u,",
+  /* edges_total is a 64-bit LO/HI pair in the fabric; the helper reads the
+     halves in the order the hardware latches them. */
+  fprintf(f, "%s,%.6f,%.6f,%.6f,%" PRIu64 ",%u,%u,",
           binary_name, child_s, instr_s, global_s,
-          edge_extractor_read(edge, EDGE_EXTRACTOR_TOTAL),
+          edge_extractor_read_edges_total(edge),
           edge_extractor_read(edge, EDGE_EXTRACTOR_OVERFLOW),
           edge_extractor_read(edge, EDGE_EXTRACTOR_FREEZE_DROP));
   decoder_stats_write_csv_row(etm, f);

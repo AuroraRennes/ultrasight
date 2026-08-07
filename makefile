@@ -156,6 +156,7 @@ $(CS_TRACE): $(CS_TRACE_OBJS) $(LIBCSACCESS) $(LIBCSACCUTIL)
 	$(CC) -o $@ $^ $(CFLAGS)
 
 $(FUZZSIGHT_LIB): $(OBJS)
+	mkdir -p $(LIB)
 	$(AR) rcs $@ $^
 
 # fuzzsight-proxy.c needs the AFL++ include path
@@ -219,6 +220,29 @@ $(TESTS_DIR)/%: $(TESTS_DIR)/%.c $(LIBSTMPRELOAD)
 # Utilities
 # ----------------------------------------------------------------------------
 
+# The headers in $(INC) are verbatim copies of fuzzsight's src/*.h; only the
+# base addresses differ, since upstream ships placeholders behind a #pragma
+# warning. `make bd-addrs` reports them against the block design for review,
+# `make bd-addrs-apply` writes them in.
+FUZZSIGHT_DIR?=
+FUZZSIGHT_BD_NAME?=fuzzsight_tri
+FUZZSIGHT_BD?=$(FUZZSIGHT_DIR)/bd/$(FUZZSIGHT_BD_NAME).tcl
+FUZZSIGHT_SRC?=$(FUZZSIGHT_DIR)/src
+
+bd-addrs:
+	./scripts/bd_addrs.py $(FUZZSIGHT_BD) -I $(INC)
+
+bd-addrs-apply:
+	./scripts/bd_addrs.py $(FUZZSIGHT_BD) -I $(INC) --apply
+
+# Re-copy the shared headers from fuzzsight, then restore the addresses. This
+# is the whole sync procedure -- there is nothing else to hand-merge.
+sync-headers:
+	cp $(FUZZSIGHT_SRC)/axi_regs.h $(FUZZSIGHT_SRC)/bitmap_dma.h \
+	   $(FUZZSIGHT_SRC)/decoder_axi.h $(FUZZSIGHT_SRC)/decoder_stats.h \
+	   $(FUZZSIGHT_SRC)/edge_extractor.h $(INC)/
+	$(MAKE) bd-addrs-apply
+
 format:
 	clang-format -i $(INC)/*.h src/*.c
 
@@ -246,4 +270,4 @@ clean-test:
 
 clean-all: clean clean-trace clean-dist
 
-.PHONY: format libcsal clean trace libforksrv proxy
+.PHONY: format libcsal clean trace libforksrv proxy bd-addrs bd-addrs-apply sync-headers

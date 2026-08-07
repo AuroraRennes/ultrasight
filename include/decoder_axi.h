@@ -9,18 +9,18 @@
 
 // Default base addresses (can/should be overridden)
 #ifndef DECODER_AXI_BASE
-#pragma message("WARNING: DECODER_AXI_BASE not defined, using placeholder 0x80000000 - override for your Vivado project")
+#pragma message("WARNING: DECODER_AXI_BASE not defined, using placeholder 0x80022000 - override for your Vivado project")
 #define DECODER_AXI_BASE 0x80022000
 #endif
 
 /* Register offsets */
 typedef enum {
-    DECODER_AXI_CTRL           = 0x00, // bit 0 = error count reset, bit 1 = soft reset
-    DECODER_AXI_STATUS         = 0x04, // bit 0 = soft_reset_done
-    DECODER_AXI_FRAME          = 0x08, // frame errors
-    DECODER_AXI_BS_GEN         = 0x0C, // bytestream gen errors
-    DECODER_AXI_DEMUX          = 0x10, // demux errors
-    DECODER_AXI_OVERFLOW       = 0x14, // ETM overflow packets
+    DECODER_AXI_CTRL           = 0x00,  // bit 0 = error count reset, bit 1 = soft reset
+    DECODER_AXI_STATUS         = 0x04,  // bit 0 = soft_reset_done
+    DECODER_AXI_FRAME          = 0x08,  // frame errors
+    DECODER_AXI_BS_GEN         = 0x0C,  // bytestream gen errors
+    DECODER_AXI_DEMUX          = 0x10,  // demux errors
+    DECODER_AXI_OVERFLOW       = 0x14,  // ETM overflow packets
     DECODER_AXI_RANGE_BASE_LO  = 0x18, // Lower 32-bits of the base address
     DECODER_AXI_RANGE_BASE_HI  = 0x1C, // Upper 32-bits of the base address
     DECODER_AXI_RANGE_END_LO   = 0x20, // Lower 32-bits of the end address
