@@ -184,12 +184,6 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
 
       printf("[+] Initializing trace\n");
       init_trace(getpid(), pid);
-      printf("[+] Starting trace for pid: %d\n", pid);
-      ret = start_trace(pid, true);
-      if (ret < 0) {
-        perror("[!] Trace could not start");
-      }
-
       if (ksight_on) {
         printf("[+] Enabling ksight tracing (pid %d)\n", pid);
         ksight_set_traced_pid(pid);
@@ -225,6 +219,14 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
       edge_extractor_reset(&edge_handle);
       decoder_axi_stats_reset(&dec_axi_handle);
       bitmap_dma_transfer(&dma_handle); // Clearing DMA
+
+      /* Enable the ETM as late as possible as it emits its one and only
+       * A-sync when it is enabled (syncpr = 0 disables periodic sync) */
+      printf("[+] Starting trace for pid: %d\n", pid);
+      ret = start_trace(pid, true);
+      if (ret < 0) {
+        perror("[!] Trace could not start");
+      }
 
       printf("[+] Sending CONT signal to child\n");
 

@@ -314,8 +314,10 @@ int configure_trace(const struct board *board, struct cs_devices_t *devices,
 
   trace_cpu_range(board, &cpu_start, &cpu_end);
 
-  /* Register and initialize the ETM for each CPU in range */
-  for (i = cpu_start; i < cpu_end; ++i) {
+  /* Register every CPU's ETM, even the ones we will not trace as the snapshot
+   * exporter (do_dump_config) walks devices->ptm[0..n_cpu) unconditionally. Only
+   * the ones in the range get activated */
+  for (i = 0; i < board->n_cpu; ++i) {
     devices->ptm[i] = cs_cpu_get_device(i, CS_DEVCLASS_SOURCE);
     if (devices->ptm[i] == CS_ERRDESC) {
       fprintf(stderr, "[!] Failed to get trace source for CPU #%d\n", i);
@@ -325,6 +327,9 @@ int configure_trace(const struct board *board, struct cs_devices_t *devices,
       fprintf(stderr, "[!] Failed to set valid trace source ID for CPU #%d\n",
               i);
       return -1;
+    }
+    if (i < cpu_start || i >= cpu_end) {
+      continue;
     }
     if (init_etm(devices->ptm[i]) < 0) {
       fprintf(stderr, "[!] Failed to initialize ETM for CPU #%d\n", i);
