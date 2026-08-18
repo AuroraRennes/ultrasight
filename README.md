@@ -80,8 +80,44 @@ $ make bd-addrs-apply FUZZSIGHT_DIR=/path/to/fuzzsight
 You can then build with:
 
 ```bash
-$ make trace // runs cs-trace on tests/fib
+$ make trace // runs cs-trace on tests/fib (described in next section)
 ```
+
+
+## Standalone tracing with `cs-trace`
+
+`cs-trace` is the standalone tracer. It forks the target under `ptrace`, configures the
+CoreSight components (ETMs, funnels, ETFs, ETR, TPIU), releases the child, and on exit
+reads the trace buffer out of the ETR into `cstrace.bin`.
+
+```bash
+$ sudo ./cs-trace [OPTIONS] -- EXE [ARGS]
+```
+
+Root is required: the tool maps CoreSight configuration registers through `/dev/mem`.
+
+#### Options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `-b, --board=NAME` | `ZCU-104` | Board profile from `include/known_boards.h`. |
+| `-c, --cpu=INT` | `-1` | Pin the traced process to a CPU. `-1` picks one automatically (preferred CPU of the parent, else a free one). |
+| `-e, --export` | off | Write an OpenCSD snapshot (`snapshot.ini`, `device_*.ini`, `cstrace.bin`) into the current directory. Required for `trc_pkt_lister`. |
+| `-f, --fetcher` | off | Run the background fetcher thread, draining the buffer during execution instead of once at exit. |
+| `-u, --udmabuf=INT` | `0` | `u-dma-buf` device number backing the ETR. |
+| `-k, --ksight` | off | Collect ksight kernel tag events. |
+| `-r, --useetr=0\|1` | `1` | Use the ETR (trace to SDRAM). With `0` there is no main sink and nothing is captured for software decoding. |
+| `-s, --usestm=0\|1` | `1` | Enable the STM/ITM software-stimulus source (trace ID `0x20`). |
+| `-t, --teardownetf=0\|1` | `1` | Disable the ETFs on teardown rather than leaving them running. |
+| `-m, --singlecpu=0\|1` | `0` | Enable/disable only the traced CPU's ETM instead of all four. Cuts trace volume roughly in half by removing the other cores' streams. |
+| `-a, --branchbroadcast=0\|1` | `1` | Enable ETM branch broadcasting. |
+| `-v, --verbose[=INT]` | `0` | Verbosity. `>0` dumps the cross-trigger config, `>1` the ETM config. |
+| `-n, --no-trace` | off | Baseline mode: `ptrace` attach/detach only, no CoreSight setup. Useful for measuring the tool's own overhead. |
+| `-o, --csv=PATH` | disabled | Append one row of decoder / edge / decoder-AXI stats to a CSV. |
+| `-g, --hashmode=MODE` | `stalker` | Edge hash mode: `none`, `fuzzsight` or `stalker`. Only decides which index an edge maps to; edge counts are identical across modes. |
+
+Boolean options take an explicit argument (`--singlecpu=1`), except `--export`, `--fetcher`,
+`--ksight` and `--no-trace`, which are flags.
 
 
 #### Trace decoding using [OpenCSD](https://github.com/Linaro/OpenCSD)
@@ -98,13 +134,12 @@ $ make
 In the `OpenCSD/decoder/tests/build/builddir/` directory lies the `trc_pkt_lister` program!
 
 
-The base trace program does not generate the snapshot structure expected by `trc_pkt_lister`. To do so, you have to add the `DEBUG=1` parameter when compiling:
+The snapshot structure expected by `trc_pkt_lister` is produced by `cs-trace`'s `--export` option, which `make trace` passes by default. `make trace` also invokes the decoder for you. To run it by hand against an existing snapshot directory:
 
 ```bash
 $ cd ultrasight
-$ DEBUG=1 make dist-clean
-$ DEBUG=1 make trace
-$ trc_pkt_lister trace/<datetime>/
+$ make trace
+$ trc_pkt_lister -ss_dir trace/<datetime>/ -stats
 ...
 Idx:6419; ID:13;        I_TRACE_INFO : Trace Info.; INFO=0x0 { CC.0 }
 Idx:6422; ID:13;        I_ADDR_L_64IS0 : Address, Long, 64 bit, IS0.; Addr=0xFFFF800008E1A7C0;

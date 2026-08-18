@@ -400,12 +400,12 @@ static void usage(char *argv0)
           fetcher_on);
   fprintf(stderr,
           "  -u, --udmabuf=INT\t\tspecify u-dma-buf device number to use "
-          "(default: %d)",
+          "(default: %d)\n",
           udmabuf_num);
   fprintf(stderr, "  -k, --ksight\t\tenable ksight kernel tag events tracing (default: %d)\n",
           ksight_on);
   fprintf(stderr, "  -r, --useetr\t\tuse the ETR sink (in SDRAM), (default %d)\n",
-          ksight_on);
+          use_etr);
   fprintf(stderr, "  -s, --usestm\t\tenable STM/ITM tracing (default %d)\n",
           use_stm);
   fprintf(stderr, "  -t, --teardownetf\t\tdisable ETFs on trace teardown (default %d)\n",
