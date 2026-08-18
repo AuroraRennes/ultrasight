@@ -63,7 +63,7 @@ void bitmap_dma_close(bitmap_dma_t *h)
 int bitmap_dma_transfer(bitmap_dma_t *h)
 {
     // Trigger bitmap reader DMA
-    axi_regs_write(&h->reader, BITMAP_READER_CTRL, 1);
+    axi_regs_write(&h->reader, BITMAP_READER_CTRL, CTRL_DMA_REQ);
 
     // // Wait for dma busy
     while (!(axi_regs_read(&h->reader, BITMAP_READER_STATUS) & STATUS_DMA_BUSY))

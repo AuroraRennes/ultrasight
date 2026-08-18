@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include <sys/shm.h>
 #include <sys/types.h>
@@ -15,7 +16,19 @@
 #define FORKSRV_FD 198
 #define AFLCS_FORKSRV_FD (FORKSRV_FD - 3)
 
-static void __cs_start_forkserver(void) {
+void __cs_start_forkserver(void) {
+    if(getenv("__CS_PROXY") != NULL) {
+        /* CS-PROXY */
+        fprintf(stdout, "Start forksrv\n");
+    } else {
+        /* CS-TRACE */
+        if(getenv("__CS_TRACE") != NULL) {
+            raise(SIGSTOP);
+            return;
+        }else {
+            return;
+        }
+    }
     int status;
     pid_t child_pid;
 
@@ -32,7 +45,14 @@ static void __cs_start_forkserver(void) {
             _exit(2); // parent dead/pipe closed
         }
 
-        child_pid = fork();
+        /* 10 retries checking for EAGAIN */
+        for (int attempt = 0; attempt < 10; attempt++) {
+            child_pid = fork();
+            if (child_pid >= 0 || errno != EAGAIN) {
+                break;
+            }
+            usleep(1000 << attempt);
+        }
         if (child_pid < 0) {
             _exit(3); // fork failed
         }
@@ -51,10 +71,10 @@ static void __cs_start_forkserver(void) {
             return;
         }
 
-        /* Parent — wait for child to be confirmed stopped before telling proxy */
+        /* Parent. Wait for the child to actually reach its raise(SIGSTOP). */
         int stop_status;
         if (waitpid(child_pid, &stop_status, WUNTRACED) < 0) {
-            _exit(4); // waitpid failed writing for SIGSTOP
+            _exit(4); // waitpid failed waiting for SIGSTOP
         }
         if (!WIFSTOPPED(stop_status) || WSTOPSIG(stop_status) != SIGSTOP) {
             if (write(AFLCS_FORKSRV_FD + 1, &stop_status, 4) != 4) {
@@ -84,28 +104,14 @@ static void __cs_start_forkserver(void) {
     }
 }
 
-int __libc_start_main(int (*main)(int, char **, char **), int argc, char **argv,
-                      void (*init)(void), void (*fini)(void),
-                      void (*rtld_fini)(void), void *stack_end) {
+#ifndef STATIC
 
-    int (*orig)(int (*main)(int, char **, char **), int argc, char **argv,
-                void (*init)(void), void (*fini)(void), void (*rtld_fini)(void),
-                void *stack_end);
-
-    orig = dlsym(RTLD_NEXT, __func__);
-    if (!orig) {
-        fprintf(stderr, "Did not find original %s: %s\n", __func__, dlerror());
-        exit(EXIT_FAILURE);
-    }
-
-
-    if(getenv("CS_FORKSERVER") != NULL){
-        /* AFL-CS-START */
-        do { __cs_start_forkserver(); } while(0);
-    }else{
-        /* CS-TRACE */
-        raise(SIGSTOP);
-    }
-
-  return orig(main, argc, argv, init, fini, rtld_fini, stack_end);
+/* Start the forkserver from a constructor rather than from a __libc_start_main
+ * hook. Runs after the dynamic linker has already finished relocation, but
+ * before the traced binary's own constructors and its main(). Raises a single
+ * SIGSTOP under cs-trace, and is a no-op otherwise. */
+__attribute__((constructor))
+static void __cs_forkserver_ctor(void) {
+    __cs_start_forkserver();
 }
+#endif

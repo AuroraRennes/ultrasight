@@ -247,9 +247,13 @@ static void __afl_start_forkserver(char **target_argv) {
     close(FORKSRV_FD);
     close(FORKSRV_FD + 1);
 
-    /* Build LD_PRELOAD: optional CS_LD_PRELOAD + libforksrv.so */
+    /* Build LD_PRELOAD: optional CS_LD_PRELOAD + libforksrv.so.
+       With CS_DEFER_FORKSRV the target links libforksrv.a itself and calls
+       __cs_start_forkserver() at its own chosen point, so we must not preload
+       the .so on top of it. */
+    char *cs_defer_forksrv = getenv("CS_DEFER_FORKSRV");
     char *libforksrv_path = getenv("FUZZSIGHT_LIBFORKSRV");
-    if (!libforksrv_path) {
+    if (!libforksrv_path && !cs_defer_forksrv) {
       perror("[!] fuzzsight-proxy child: could not find libforksrv.so");
       exit(EXIT_FAILURE);
     }
@@ -258,16 +262,18 @@ static void __afl_start_forkserver(char **target_argv) {
     char *cs_ld_preload = getenv("CS_LD_PRELOAD");
     if (cs_ld_preload) {
       strncat(ld_preload, cs_ld_preload, sizeof(ld_preload) - strlen(ld_preload) - 2);
-      strncat(ld_preload, ":", sizeof(ld_preload) - strlen(ld_preload) - 2);
+      if (!cs_defer_forksrv)
+        strncat(ld_preload, ":", sizeof(ld_preload) - strlen(ld_preload) - 2);
     }
-    strncat(ld_preload, libforksrv_path, sizeof(ld_preload) - strlen(ld_preload) - 1);
+    if (!cs_defer_forksrv)
+      strncat(ld_preload, libforksrv_path, sizeof(ld_preload) - strlen(ld_preload) - 1);
 
     char ld_lib[4096] = "LD_LIBRARY_PATH=";
     char *cs_ld_lib = getenv("CS_LD_LIBRARY_PATH");
     if (cs_ld_lib)
       strncat(ld_lib, cs_ld_lib, sizeof(ld_lib) - strlen(ld_lib) - 1);
 
-    char *envp[] = { "CS_FORKSERVER=1", ld_preload, ld_lib, NULL };
+    char *envp[] = { "__CS_PROXY=1", ld_preload, ld_lib, NULL };
 
     execve(target_argv[0], target_argv, envp);
     perror("[!] fuzzsight-proxy child: execve failed");

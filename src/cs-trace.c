@@ -62,6 +62,25 @@ extern unsigned int trace_bitmap_size;
  * invocations and compared afterwards. */
 static char *stats_csv_path = NULL;
 
+/* Edge-hash mode selected on the command line. cs-trace sets this explicitly
+ * rather than inheriting edge_extractor's reset default, so a change to that
+ * default cannot silently alter what a sweep measures. STALKER matches the
+ * hardware default and every sweep taken so far; fuzzsight-proxy selects
+ * FUZZSIGHT. The mode only decides which index an edge maps to -- edge counts
+ * are identical across modes -- but it is recorded in the CSV so a result set
+ * says which one produced it. */
+static edge_hash_mode_t edge_hash_mode = EDGE_HASH_STALKER;
+
+static const char *edge_hash_mode_name(edge_hash_mode_t m)
+{
+  switch (m) {
+    case EDGE_HASH_NONE:      return "none";
+    case EDGE_HASH_FUZZSIGHT: return "fuzzsight";
+    case EDGE_HASH_STALKER:   return "stalker";
+    default:                  return "unknown";
+  }
+}
+
 /**
  * Appends one row of ETM decoder / edge / decoder-AXI stats to the CSV at
  * `path`, writing a header line first if the file doesn't exist yet.
@@ -80,16 +99,17 @@ static void write_stats_csv(const char *path, const char *binary_name,
   if (need_header) {
     fprintf(f,
             "binary,child_time_s,instr_time_s,global_time_s,"
-            "edges_total,edges_fifo_overflow,edges_freeze_drop,"
+            "edges_total,edges_fifo_overflow,edges_freeze_drop,hash_mode,"
             DECODER_STATS_CSV_HEADER "," DECODER_AXI_CSV_HEADER "\n");
   }
-  /* edges_total is a 64-bit LO/HI pair in the fabric; the helper reads the
-     halves in the order the hardware latches them. */
-  fprintf(f, "%s,%.6f,%.6f,%.6f,%" PRIu64 ",%u,%u,",
+  fprintf(f, "%s,%.6f,%.6f,%.6f,%" PRIu64 ",%u,%u,%s,",
           binary_name, child_s, instr_s, global_s,
           edge_extractor_read_edges_total(edge),
           edge_extractor_read(edge, EDGE_EXTRACTOR_OVERFLOW),
-          edge_extractor_read(edge, EDGE_EXTRACTOR_FREEZE_DROP));
+          edge_extractor_read(edge, EDGE_EXTRACTOR_FREEZE_DROP),
+          /* read back from the hardware, not the requested value, so a
+             rejected or clobbered write shows up in the data */
+          edge_hash_mode_name(edge_extractor_get_hash_mode(edge)));
   decoder_stats_write_csv_row(etm, f);
   fprintf(f, ",");
   decoder_axi_write_csv_row(axi, f);
@@ -181,6 +201,18 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
 
       ret = edge_extractor_open(&edge_handle);
       if (ret < 0) perror("[!] EDGE AXI stats mapping issue");
+      /* Select the hash mode */
+      edge_extractor_set_hash_mode(&edge_handle, edge_hash_mode);
+      {
+        /* Confirm the write landed */
+        edge_hash_mode_t got = edge_extractor_get_hash_mode(&edge_handle);
+        if (got != edge_hash_mode)
+          fprintf(stderr,
+                  "[!] Edge hash mode not applied: asked for %s, hardware reports %s. "
+                  "The loaded bitstream likely predates the hash-mode register; "
+                  "the CSV records what the hardware reports.\n",
+                  edge_hash_mode_name(edge_hash_mode), edge_hash_mode_name(got));
+      }
 
       ret = bitmap_dma_open(&dma_handle, DEFAULT_TRACE_BITMAP_SIZE);
       if (ret < 0) perror("[!] Bitmap DMA setup issue");
@@ -388,6 +420,8 @@ static void usage(char *argv0)
   fprintf(stderr,
           "  -o, --csv=PATH\t\tappend decoder/edge stats as a CSV row to "
           "PATH (default: disabled)\n");
+  fprintf(stderr, "  -g, --hashmode=MODE\t\tedge hash mode: none, fuzzsight or "
+                  "stalker (default %s)\n", edge_hash_mode_name(edge_hash_mode));
   fprintf(stderr, "  -h, --help\t\t\tshow this help\n");
 }
 
@@ -412,6 +446,7 @@ int main(int argc, char *argv[])
       {"verbose", optional_argument, NULL, 'v'},
       {"notrace", optional_argument, NULL, 'n'},
       {"csv", required_argument, NULL, 'o'},
+      {"hashmode", required_argument, NULL, 'g'},
       {"help", no_argument, NULL, 'h'},
       {0, 0, 0, 0},
   };
@@ -431,7 +466,7 @@ int main(int argc, char *argv[])
     exit(EXIT_SUCCESS);
   }
   /* Parse CLI elements */
-  while ((opt = getopt_long(argc, argv, "b:c:e:f:u:k:r:s:t:m:a:v:n::o:h", long_options,
+  while ((opt = getopt_long(argc, argv, "b:c:e:f:u:k:r:s:t:m:a:v:n::o:g:h", long_options,
                             &option_index)) != -1) {
     switch (opt) {
       /* Board name */
@@ -488,6 +523,19 @@ int main(int argc, char *argv[])
         stats_csv_path = optarg;
         break;
       /* Help display */
+      case 'g':
+        if (!strcmp(optarg, "none"))
+          edge_hash_mode = EDGE_HASH_NONE;
+        else if (!strcmp(optarg, "fuzzsight"))
+          edge_hash_mode = EDGE_HASH_FUZZSIGHT;
+        else if (!strcmp(optarg, "stalker"))
+          edge_hash_mode = EDGE_HASH_STALKER;
+        else {
+          fprintf(stderr, "[!] Unknown hash mode '%s' "
+                          "(expected none, fuzzsight or stalker)\n", optarg);
+          exit(EXIT_FAILURE);
+        }
+        break;
       case 'h':
         usage(argv[0]);
         exit(EXIT_SUCCESS);
