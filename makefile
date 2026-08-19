@@ -47,6 +47,9 @@ CSAL_MAKE_FLAGS:=ARCH=$(CSAL_ARCH) NO_DIAG=1 CHECK=1
 LIBCSACCESS:=$(CSAL_LIB)/libcsaccess.a
 LIBCSACCUTIL:=$(CSAL_LIB)/libcsacc_util.a
 
+# AFL include, only needed by the proxy
+AFL_INC?=
+
 # ultrasight files
 INC:=include
 SRC:=src
@@ -150,7 +153,9 @@ LIBSTMPRELOAD:=$(LIB)/libstm_preload.so
 # Build targets
 # ----------------------------------------------------------------------------
 
-all: $(CS_TRACE) $(FUZZSIGHT_LIB) $(FUZZSIGHT_PROXY)
+all: $(CS_TRACE) $(FUZZSIGHT_LIB)
+
+all-proxy: all proxy
 
 $(CS_TRACE): $(CS_TRACE_OBJS) $(LIBCSACCESS) $(LIBCSACCUTIL)
 	$(CC) -o $@ $^ $(CFLAGS)
@@ -187,6 +192,14 @@ debug: $(CS_TRACE) $(TESTS_DUMPS) disable_aslr
 	sudo gdb --args $(realpath $(CS_TRACE)) $(CS_TRACE_FLAGS) -- $(realpath $(TRACEE)) $(TRACEE_ARGS)
 
 proxy: $(LIBFORKSRV)
+ifeq ($(strip $(AFL_INC)),)
+	@echo "[-] AFL_INC is not set; fuzzsight-proxy needs the AFL++ headers."
+	@echo "    make proxy AFL_INC=/path/to/AFLplusplus/include"
+	@false
+else
+	@test -f "$(AFL_INC)/config.h" || \
+		echo "[-] warning: $(AFL_INC)/config.h missing, AFL_INC may be wrong."
+endif
 	rm -f $(FUZZSIGHT_PROXY_OBJ) $(FUZZSIGHT_PROXY)
 	$(MAKE) $(FUZZSIGHT_PROXY) AFL_INC=$(AFL_INC) DEBUG=$(DEBUG) TIMING=$(TIMING) STATS=$(STATS)
 
@@ -270,4 +283,4 @@ clean-test:
 
 clean-all: clean clean-trace clean-dist
 
-.PHONY: format libcsal clean trace libforksrv proxy bd-addrs bd-addrs-apply sync-headers
+.PHONY: all all-proxy format libcsal clean trace libforksrv proxy bd-addrs bd-addrs-apply sync-headers
