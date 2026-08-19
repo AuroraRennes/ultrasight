@@ -51,7 +51,7 @@ extern char *board_name;
 extern bool export_config;
 extern bool fetcher_on;
 extern bool no_trace;
-extern int udmabuf_num;
+extern const char *udmabuf_name;
 extern bool ksight_on;
 extern int trace_cpu;
 extern unsigned char *trace_bitmap;
@@ -399,9 +399,9 @@ static void usage(char *argv0)
   fprintf(stderr, "  -f, --fetcher\t\tenable fetcher worker (default: %d)\n",
           fetcher_on);
   fprintf(stderr,
-          "  -u, --udmabuf=INT\t\tspecify u-dma-buf device number to use "
-          "(default: %d)\n",
-          udmabuf_num);
+          "  -u, --udmabuf=NAME\t\tu-dma-buf device the ETR drains into "
+          "(default: %s, or $%s)\n",
+          UDMABUF_ETR_NAME, ETR_UDMABUF_ENV);
   fprintf(stderr, "  -k, --ksight\t\tenable ksight kernel tag events tracing (default: %d)\n",
           ksight_on);
   fprintf(stderr, "  -r, --useetr\t\tuse the ETR sink (in SDRAM), (default %d)\n",
@@ -486,9 +486,9 @@ int main(int argc, char *argv[])
       case 'f':
         fetcher_on = true;
         break;
-      /* udmabuf number */
+      /* udmabuf device name */
       case 'u':
-        udmabuf_num = atoi(optarg);
+        udmabuf_name = optarg;
         break;
       case 'k':
         ksight_on = true;

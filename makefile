@@ -76,10 +76,21 @@ OBJS:= \
 	$(SRC)/axi_regs.o \
 	$(SRC)/bitmap_dma.o \
 
+# u-dma-buf devices, by name. Physical addresses and sizes are read from
+# /sys/class/u-dma-buf/<name>/ at run time, so only the names are configured
+# here; they are runtime Linux allocations and cannot come from bd-addrs.
+# These two must stay distinct -- pointing them at the same buffer makes the
+# bitmap DMA overwrite the trace. Override from the environment or the command
+# line, or per run with ULTRASIGHT_UDMABUF_ETR / ULTRASIGHT_UDMABUF_FUZZSIGHT.
+UDMABUF_ETR?=udmabuf0
+UDMABUF_FUZZSIGHT?=tpiu-doctor0
+
 CFLAGS:= \
 	-std=c11 \
 	-Wall \
 	-DDEFAULT_BOARD_NAME=\"$(DEFAULT_BOARD)\" \
+	-DUDMABUF_ETR_NAME=\"$(UDMABUF_ETR)\" \
+	-DUDMABUF_FUZZSIGHT_NAME=\"$(UDMABUF_FUZZSIGHT)\" \
 	-I$(INC) \
 	-I$(CSAL_INC) \
 	-lpthread \
@@ -152,6 +163,11 @@ LIBSTMPRELOAD:=$(LIB)/libstm_preload.so
 # ----------------------------------------------------------------------------
 # Build targets
 # ----------------------------------------------------------------------------
+
+# Rebuild objects on headers change
+$(SRC)/%.o: $(SRC)/%.c $(HDRS)
+	$(CC) $(CFLAGS) -c $< -o $@
+
 
 all: $(CS_TRACE) $(FUZZSIGHT_LIB)
 

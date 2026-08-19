@@ -44,7 +44,6 @@
 #include "ksight.h"
 #include "timing.h"
 
-#define DEFAULT_UDMABUF_NUM 0
 #define DEFAULT_ETF_SIZE 0x1000
 #define DEFAULT_TRACE_SIZE 0x80000
 #define DEFAULT_KSIGHT_SIZE 0x80000
@@ -80,7 +79,7 @@ const struct board *board;
 struct cs_devices_t devices;
 
 /* Arguments */
-int udmabuf_num = DEFAULT_UDMABUF_NUM;
+const char *udmabuf_name = NULL; /* -u; NULL: env, then UDMABUF_ETR_NAME */
 int trace_cpu = -1;
 bool export_config = false;
 bool fetcher_on = false;
@@ -947,11 +946,20 @@ int init_trace(pid_t parent_pid, pid_t pid)
     trace_cpu = preferred_cpu >= 0 ? preferred_cpu : DEFAULT_TRACE_CPU;
   }
 
-  /* Get udmabuf information (address and size), storing them in their
-   * respective variables */
+  /* Get udmabuf information (address and size) for the ETR buffer, storing
+   * them in their respective variables. The device is named by, in order of
+   * precedence: -u/--udmabuf, ETR_UDMABUF_ENV, then the build default. */
   // printf("[+] Getting u-dma-buf info\n");
-  if (get_udmabuf_info(udmabuf_num, &etr_ram_addr, &etr_ram_size) < 0) {
-    fprintf(stderr, "[!] Failed to get u-dma-buf info\n");
+  const char *etr_name = udmabuf_name;
+  if (!etr_name || !*etr_name) etr_name = getenv(ETR_UDMABUF_ENV);
+  if (!etr_name || !*etr_name) etr_name = UDMABUF_ETR_NAME;
+
+  /* Tolerate a full device path as well as a bare name */
+  const char *slash = strrchr(etr_name, '/');
+  if (slash) etr_name = slash + 1;
+
+  if (get_udmabuf_info_by_name(etr_name, &etr_ram_addr, &etr_ram_size) < 0) {
+    fprintf(stderr, "[!] Failed to get u-dma-buf info for '%s'\n", etr_name);
     goto exit;
   }
 

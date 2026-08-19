@@ -23,6 +23,17 @@
 
 #define RANGE_MAX (1)
 
+/* u-dma-buf device the ETR drains into, named the same way as the fuzzsight
+ * bitmap buffer: address and size come from sysfs at run time. The default is
+ * UDMABUF_ETR_NAME from the build; ETR_UDMABUF_ENV overrides it per run, and
+ * -u/--udmabuf overrides both. Must not name the bitmap buffer, whose own
+ * setting lives in bitmap_dma.h. */
+#define ETR_UDMABUF_ENV "ULTRASIGHT_UDMABUF_ETR"
+
+#ifndef UDMABUF_ETR_NAME
+#error "UDMABUF_ETR_NAME not defined: pass -DUDMABUF_ETR_NAME=\"<name>\" (see UDMABUF_ETR in the makefile)"
+#endif
+
 struct map_info {
   unsigned long start;
   unsigned long end;
@@ -50,7 +61,9 @@ int export_decoder_args(int trace_id, const char *trace_path,
 int get_preferred_cpu(pid_t pid);
 int find_free_cpu(void);
 int set_cpu_affinity(int cpu, pid_t pid);
-int get_udmabuf_info(int udmabuf_num, unsigned long *phys_addr, size_t *size);
+
+int get_udmabuf_info_by_name(const char *name, unsigned long *phys_addr,
+                             size_t *size);
 int get_ksight_info(unsigned long *phys_addr);
 int ksight_set_enable(int enable);
 int ksight_set_traced_pid(pid_t pid);

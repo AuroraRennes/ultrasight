@@ -52,6 +52,18 @@ $ cat /sys/class/u-dma-buf/udmabuf0/phys_addr
 $ cat /sys/class/u-dma-buf/udmabuf0/size
 ```
 
+Two separate buffers are in play and they must not be the same one: the ETR drains the trace into one, the fuzzsight bitmap DMA writes into the other. Pointing them at the same buffer makes the bitmap readout overwrite the trace. Each is identified only by its `u-dma-buf` name, the physical address and the size are read from `/sys/class/u-dma-buf/<name>/` at run time, and the device node is `/dev/<name>`.
+
+| Buffer | Build default (makefile) | Environment override | CLI |
+| --- | --- | --- | --- |
+| ETR trace sink | `UDMABUF_ETR` (`udmabuf0`) | `ULTRASIGHT_UDMABUF_ETR` | `-u NAME` |
+| fuzzsight bitmap DMA | `UDMABUF_FUZZSIGHT` (`tpiu-doctor0`) | `ULTRASIGHT_UDMABUF_FUZZSIGHT` | — |
+
+> *Note:* CLI beats the environment, which beats the build default. All three accept a bare name or a full `/dev/...` path. To change a default at build time:
+> ```
+> $ make UDMABUF_FUZZSIGHT=udmabuf9
+> ```
+
 #### Build
 
 Initialize the repository:
@@ -104,7 +116,7 @@ Root is required: the tool maps CoreSight configuration registers through `/dev/
 | `-c, --cpu=INT` | `-1` | Pin the traced process to a CPU. `-1` picks one automatically (preferred CPU of the parent, else a free one). |
 | `-e, --export` | off | Write an OpenCSD snapshot (`snapshot.ini`, `device_*.ini`, `cstrace.bin`) into the current directory. Required for `trc_pkt_lister`. |
 | `-f, --fetcher` | off | Run the background fetcher thread, draining the buffer during execution instead of once at exit. |
-| `-u, --udmabuf=INT` | `0` | `u-dma-buf` device number backing the ETR. |
+| `-u, --udmabuf=NAME` | `udmabuf0` | `u-dma-buf` device the ETR drains into. Overrides `$ULTRASIGHT_UDMABUF_ETR` and the build default. |
 | `-k, --ksight` | off | Collect ksight kernel tag events. |
 | `-r, --useetr=0\|1` | `1` | Use the ETR (trace to SDRAM). With `0` there is no main sink and nothing is captured for software decoding. |
 | `-s, --usestm=0\|1` | `1` | Enable the STM/ITM software-stimulus source (trace ID `0x20`). |

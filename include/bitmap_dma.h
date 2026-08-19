@@ -25,15 +25,12 @@
 #define DMA_BASE 0x80000000
 #endif
 
-#ifndef UDMABUF_DST
-#pragma message("WARNING: UDMABUF_DST not defined, using placeholder")
-#define UDMABUF_DST 0x60000000
+/* u-dma-buf device backing the bitmap S2MM transfer */
+#ifndef UDMABUF_FUZZSIGHT_NAME
+#error "UDMABUF_FUZZSIGHT_NAME not defined: pass -DUDMABUF_FUZZSIGHT_NAME=\"<name>\" (see UDMABUF_FUZZSIGHT in the makefile)"
 #endif
 
-#ifndef UDMABUF_DEV
-#pragma message("WARNING: UDMABUF_DEV not defined, using placeholder")
-#define UDMABUF_DEV "/dev/udmabuf0"
-#endif
+#define BITMAP_UDMABUF_ENV "ULTRASIGHT_UDMABUF_FUZZSIGHT"
 
 // Bitmap reader AXI-Lite
 #define BITMAP_READER_MAP_SIZE      0x1000
@@ -52,6 +49,7 @@ typedef struct {
     axi_regs_t      dma;
     axi_regs_t      reader;
     int             udmabuf_fd;
+    unsigned long   dst_addr;
     void           *buf;
     size_t          buf_size;
 } bitmap_dma_t;

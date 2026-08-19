@@ -101,33 +101,29 @@ void dump_maps(FILE *stream, pid_t pid)
 
 /* ============== UDMABUF ============== */
 
-/* Retrieve information (address and size) of a UDMA buffer */
-int get_udmabuf_info(int udmabuf_num, unsigned long *phys_addr, size_t *size)
+/* Retrieve information (address and size) of a UDMA buffer, by device name */
+int get_udmabuf_info_by_name(const char *name, unsigned long *phys_addr,
+                             size_t *size)
 {
   const char *udmabuf_root = "/sys/class/u-dma-buf";
 
-  int ret;
   char udmabuf_path[PATH_MAX];
   char tmp_path[PATH_MAX];
   char attr[1024];
   int fd;
   struct stat sb;
 
-  ret = -1;
-
-  /* Check for existence "/sys/class/u-dma-buf/udmabufX" */
+  /* Check for existence "/sys/class/u-dma-buf/<name>" */
   memset(udmabuf_path, '\0', sizeof(udmabuf_path));
-  snprintf(udmabuf_path, sizeof(udmabuf_path), "%s/udmabuf%d", udmabuf_root,
-           udmabuf_num);
+  snprintf(udmabuf_path, sizeof(udmabuf_path), "%s/%s", udmabuf_root, name);
   if (stat(udmabuf_path, &sb) != 0 || (!S_ISDIR(sb.st_mode))) {
-    fprintf(stderr, "u-dma-buf device 'udmabuf%d' not found\n", udmabuf_num);
-    return ret;
+    fprintf(stderr, "u-dma-buf device '%s' not found\n", name);
+    return -1;
   }
 
   /* Read the "phys_addr" through the sysfs, opening the file in read-only */
   memset(tmp_path, '\0', sizeof(tmp_path));
-  snprintf(tmp_path, sizeof(tmp_path), "%s/udmabuf%d/phys_addr", udmabuf_root,
-           udmabuf_num);
+  snprintf(tmp_path, sizeof(tmp_path), "%s/%s/phys_addr", udmabuf_root, name);
   if ((fd = open(tmp_path, O_RDONLY)) < 0) {
     perror("open");
     return -1;
@@ -141,10 +137,10 @@ int get_udmabuf_info(int udmabuf_num, unsigned long *phys_addr, size_t *size)
   }
   sscanf(attr, "%lx", phys_addr);
   close(fd);
+
   /* Read the "size" through the sysfs, opening the file in read-only */
   memset(tmp_path, '\0', sizeof(tmp_path));
-  snprintf(tmp_path, sizeof(tmp_path), "%s/udmabuf%d/size", udmabuf_root,
-           udmabuf_num);
+  snprintf(tmp_path, sizeof(tmp_path), "%s/%s/size", udmabuf_root, name);
   if ((fd = open(tmp_path, O_RDONLY)) < 0) {
     perror("open");
     return -1;
