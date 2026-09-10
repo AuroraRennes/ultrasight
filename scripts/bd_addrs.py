@@ -26,6 +26,8 @@ PERIPHERALS = {
     "decoder_stats_lut": ("DECODER_STATS_BASE_ETM", "decoder_stats.h"),
     "edge_extractor": ("EDGE_EXTRACTOR_BASE", "edge_extractor.h"),
     "decoder_axi_interface_0": ("DECODER_AXI_BASE", "decoder_axi.h"),
+    "trace_capture": ("TRACE_CAPTURE_BASE", "trace_capture.h"),
+    "trace_dma": ("TRACE_DMA_BASE", "trace_capture.h"),
 }
 
 PLACEHOLDER = 0x80000000

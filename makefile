@@ -67,6 +67,7 @@ HDRS:= \
 	$(INC)/edge_extractor.h \
 	$(INC)/bitmap_dma.h \
 	$(INC)/decoder_axi.h \
+	$(INC)/trace_capture.h \
 	$(INC)/timing.h \
 
 OBJS:= \
@@ -118,6 +119,7 @@ CS_TRACE:=cs-trace
 CS_TRACE_FLAGS?=--export # --ksight
 CS_TRACE_OBJS:= \
 	$(OBJS) \
+	$(SRC)/trace_capture.o \
 	$(SRC)/cs-trace.o
 
 ifneq ($(strip $(DEBUG)),)
@@ -268,7 +270,7 @@ bd-addrs-apply:
 sync-headers:
 	cp $(FUZZSIGHT_SRC)/axi_regs.h $(FUZZSIGHT_SRC)/bitmap_dma.h \
 	   $(FUZZSIGHT_SRC)/decoder_axi.h $(FUZZSIGHT_SRC)/decoder_stats.h \
-	   $(FUZZSIGHT_SRC)/edge_extractor.h $(INC)/
+	   $(FUZZSIGHT_SRC)/edge_extractor.h $(FUZZSIGHT_SRC)/trace_capture.h $(INC)/
 	$(MAKE) bd-addrs-apply
 
 format:
