@@ -10,8 +10,8 @@
 #include <unistd.h>
 
 /* Read "phys_addr" and "size" for a u-dma-buf device out of sysfs */
-static int udmabuf_sysfs_info(const char *name, unsigned long *phys_addr,
-                              size_t *size)
+int udmabuf_sysfs_info(const char *name, unsigned long *phys_addr,
+                       size_t *size)
 {
     const char *root = "/sys/class/u-dma-buf";
     char path[256];

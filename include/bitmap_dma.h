@@ -58,4 +58,8 @@ int  bitmap_dma_open(bitmap_dma_t *h, size_t bitmap_size);
 void bitmap_dma_close(bitmap_dma_t *h);
 int  bitmap_dma_transfer(bitmap_dma_t *h);
 
+/* Read "phys_addr" and "size" for a u-dma-buf device out of sysfs, shared
+ * with trace_capture.c */
+int  udmabuf_sysfs_info(const char *name, unsigned long *phys_addr, size_t *size);
+
 #endif
