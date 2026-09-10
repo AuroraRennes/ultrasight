@@ -6,11 +6,6 @@ thing that cannot be copied is the base address: upstream ships a placeholder
 (0x80000000) behind an #ifndef with a #pragma warning telling you to override
 it for your own Vivado project.
 
-Reads the address map the block design already records and prints it
-next to what each header currently holds, for you to eyeball. --apply then
-rewrites the literals in place, leaving everything else byte-identical to
-upstream.
-
 Usage:
     ./scripts/bd_addrs.py ~/vivproj/fuzzsight/bd/fuzzsight_tri.tcl
     ./scripts/bd_addrs.py ~/vivproj/fuzzsight/bd/fuzzsight_tri.tcl --apply
@@ -26,11 +21,11 @@ import zipfile
 
 # Block-design instance name -> the macro it feeds and the header holding it.
 PERIPHERALS = {
-    "axi_dma":                 ("DMA_BASE",               "bitmap_dma.h"),
-    "bitmap_tri_reader_br_0":  ("BITMAP_READER_BASE",     "bitmap_dma.h"),
-    "decoder_stats_lut":       ("DECODER_STATS_BASE_ETM", "decoder_stats.h"),
-    "edge_extractor":          ("EDGE_EXTRACTOR_BASE",    "edge_extractor.h"),
-    "decoder_axi_interface_0": ("DECODER_AXI_BASE",       "decoder_axi.h"),
+    "axi_dma": ("DMA_BASE", "bitmap_dma.h"),
+    "bitmap_tri_reader_br_0": ("BITMAP_READER_BASE", "bitmap_dma.h"),
+    "decoder_stats_lut": ("DECODER_STATS_BASE_ETM", "decoder_stats.h"),
+    "edge_extractor": ("EDGE_EXTRACTOR_BASE", "edge_extractor.h"),
+    "decoder_axi_interface_0": ("DECODER_AXI_BASE", "decoder_axi.h"),
 }
 
 PLACEHOLDER = 0x80000000
@@ -40,13 +35,9 @@ PLACEHOLDER = 0x80000000
 # Reading the block design
 # --------------------------------------------------------------------------
 
-def seg_to_instance(seg):
-    """Turn a get_bd_addr_segs path into the flat instance name the .hwh uses.
 
-    The last two components are the slave interface and its register block
-    ('decoder/axi_interface_0/s_axi/reg0'); what remains is the instance,
-    with block-design hierarchy flattened by '_' -> 'decoder_axi_interface_0'.
-    """
+def seg_to_instance(seg):
+    """Turn a get_bd_addr_segs path into the flat instance name the .hwh uses."""
     parts = seg.strip().split("/")
     return "_".join(parts[:-2]) if len(parts) >= 3 else None
 
@@ -94,7 +85,7 @@ def collect_hwh(path):
     path = pathlib.Path(path)
     if path.suffix == ".xsa":
         with zipfile.ZipFile(path) as z:
-            # An .xsa also ships per-interconnect .hwh files; the top-level one
+            # An .xsa also ships per-interconnect .hwh files, the top-level one
             # is named after the block design and has the full map.
             top = f"{path.stem}.hwh"
             if top not in z.namelist():
@@ -118,9 +109,11 @@ def collect_hwh(path):
 # Reading and rewriting the headers
 # --------------------------------------------------------------------------
 
+
 def macro_pattern(macro):
-    return re.compile(rf"^([ \t]*#define[ \t]+{re.escape(macro)}[ \t]+)(0x[0-9A-Fa-f]+)",
-                      re.M)
+    return re.compile(
+        rf"^([ \t]*#define[ \t]+{re.escape(macro)}[ \t]+)(0x[0-9A-Fa-f]+)", re.MULTILINE
+    )
 
 
 def current_value(header_text, macro):
@@ -129,11 +122,7 @@ def current_value(header_text, macro):
 
 
 def apply_to_header(header_text, macro, value):
-    """Set the macro's literal, and any hex in the #pragma message beside it.
-
-    The pragma quotes the placeholder ('using placeholder 0x80000000'); leaving
-    it stale would have the warning contradict the actual define.
-    """
+    """Set the macro's literal, and any hex in the #pragma message beside it."""
     new_text, n = macro_pattern(macro).subn(rf"\g<1>0x{value:08X}", header_text)
     if not n:
         return header_text, 0
@@ -141,20 +130,35 @@ def apply_to_header(header_text, macro, value):
     def fix_pragma(m):
         return re.sub(r"0x[0-9A-Fa-f]{8}", f"0x{value:08X}", m.group(0))
 
-    new_text = re.sub(rf"^[ \t]*#pragma message\([^\n]*{re.escape(macro)}[^\n]*\)",
-                      fix_pragma, new_text, flags=re.M)
+    new_text = re.sub(
+        rf"^[ \t]*#pragma message\([^\n]*{re.escape(macro)}[^\n]*\)",
+        fix_pragma,
+        new_text,
+        flags=re.MULTILINE,
+    )
     return new_text, n
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("bd", metavar="BD",
-                    help="block design .tcl (preferred), or the .xsa/.hwh from a build")
-    ap.add_argument("-I", "--include-dir", default="include",
-                    help="directory holding the copied fuzzsight headers")
-    ap.add_argument("--apply", action="store_true",
-                    help="rewrite the header literals instead of only reporting")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "bd",
+        metavar="BD",
+        help="block design .tcl (preferred), or the .xsa/.hwh from a build",
+    )
+    ap.add_argument(
+        "-I",
+        "--include-dir",
+        default="include",
+        help="directory holding the copied fuzzsight headers",
+    )
+    ap.add_argument(
+        "--apply",
+        action="store_true",
+        help="rewrite the header literals instead of only reporting",
+    )
     args = ap.parse_args()
 
     src = pathlib.Path(args.bd).expanduser()
@@ -166,7 +170,9 @@ def main():
 
     missing = [i for i in PERIPHERALS if i not in found]
     if missing:
-        sys.exit(f"{design}: peripherals absent from the address map: {', '.join(missing)}")
+        sys.exit(
+            f"{design}: peripherals absent from the address map: {', '.join(missing)}"
+        )
 
     inc = pathlib.Path(args.include_dir)
     print(f"block design: {design}  ({src})\n")

@@ -249,9 +249,8 @@ $(TESTS_DIR)/%: $(TESTS_DIR)/%.c $(LIBSTMPRELOAD)
 # Utilities
 # ----------------------------------------------------------------------------
 
-# The headers in $(INC) are verbatim copies of fuzzsight's src/*.h; only the
-# base addresses differ, since upstream ships placeholders behind a #pragma
-# warning. `make bd-addrs` reports them against the block design for review,
+# The headers in $(INC) are copies of fuzzsight's src/*.h; only the base addresses
+# differ. `make bd-addrs` reports #pragmas against the block design for review,
 # `make bd-addrs-apply` writes them in.
 FUZZSIGHT_DIR?=
 FUZZSIGHT_BD_NAME?=fuzzsight_tri
