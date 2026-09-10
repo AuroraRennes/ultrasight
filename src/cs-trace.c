@@ -35,6 +35,7 @@
 #include "decoder_stats.h"
 #include "edge_extractor.h"
 #include "bitmap_dma.h"
+#include "trace_capture.h"
 #include "decoder_axi.h"
 
 /**
@@ -42,6 +43,9 @@
  */
 #define DEFAULT_TRACE_BITMAP_SIZE_POW2 (16)
 #define DEFAULT_TRACE_BITMAP_SIZE (1U << (DEFAULT_TRACE_BITMAP_SIZE_POW2))
+/* Same name fini_trace() uses for the ETR dump, so a capture is a drop-in
+ * replacement in the snapshot directory */
+#define DEFAULT_CAPTURE_NAME "cstrace.bin"
 extern int registration_verbose;
 extern bool use_etr;
 extern bool use_stm;
@@ -80,6 +84,60 @@ static const char *edge_hash_mode_name(edge_hash_mode_t m)
     case EDGE_HASH_STALKER:   return "stalker";
     default:                  return "unknown";
   }
+}
+
+/* What a run is for. The fuzzsight_tri bitstream carries both paths but they
+ * are never used together: FUZZ hashes edges into the bitmap and reads it out
+ * over the bitmap DMA, CAPTURE streams the raw TPIU frames into DDR over the
+ * trace DMA and writes them as cstrace.bin. Each mode only opens its own
+ * blocks, so the other DMA is never programmed. */
+typedef enum { RUN_MODE_FUZZ, RUN_MODE_CAPTURE } run_mode_t;
+static run_mode_t run_mode = RUN_MODE_FUZZ;
+
+static const char *run_mode_name(run_mode_t m)
+{
+  return m == RUN_MODE_CAPTURE ? "capture" : "fuzz";
+}
+
+#define S2MM_STATUS_HALTED (1 << 0)
+
+/* An S2MM channel is mid-transfer when it is neither halted nor idle */
+static int s2mm_busy(unsigned long base, const char *what)
+{
+  axi_regs_t regs;
+  if (axi_regs_open(&regs, base, DMA_MAP_SIZE) < 0) {
+    perror("[!] axi_regs_open");
+    return -1;
+  }
+  uint32_t st = axi_regs_read(&regs, S2MM_STATUS_REGISTER);
+  axi_regs_close(&regs);
+  if (!(st & S2MM_STATUS_HALTED) && !(st & STATUS_IDLE)) {
+    fprintf(stderr, "[!] %s is mid-transfer (S2MM status 0x%08x)\n", what, st);
+    return 1;
+  }
+  return 0;
+}
+
+/* Refuse to start while the other mode's path is still running, e.g. after a
+ * cs-trace killed by a timeout. Both paths live in the same bitstream, so this
+ * is a plain register read. */
+static int check_other_mode_idle(void)
+{
+  if (run_mode == RUN_MODE_CAPTURE)
+    return s2mm_busy(DMA_BASE, "The bitmap DMA") ? -1 : 0;
+
+  axi_regs_t cap;
+  if (axi_regs_open(&cap, TRACE_CAPTURE_BASE, TRACE_CAPTURE_MAP_SIZE) < 0) {
+    perror("[!] axi_regs_open trace capture");
+    return -1;
+  }
+  uint32_t st = axi_regs_read(&cap, TRACE_CAPTURE_STATUS);
+  axi_regs_close(&cap);
+  if (st & (TRACE_CAPTURE_ST_ENABLED | TRACE_CAPTURE_ST_FLUSH_BUSY)) {
+    fprintf(stderr, "[!] Trace capture still active (status 0x%08x)\n", st);
+    return -1;
+  }
+  return s2mm_busy(TRACE_DMA_BASE, "The trace DMA") ? -1 : 0;
 }
 
 /**
@@ -167,6 +225,8 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
   edge_extractor_t edge_handle;
   bitmap_dma_t dma_handle;
   decoder_axi_t dec_axi_handle;
+  trace_capture_t cap_handle;
+  bool cap_open = false, cap_armed = false;
 
   /* Global timer starts before anything, including the initial waitpid */
   clock_gettime(CLOCK_MONOTONIC, &global_start);
@@ -194,32 +254,44 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
       ret = decoder_stats_open(&dec_stats_etm_handle);
       if (ret < 0) perror("[!] ETM AXI stats mapping issue");
 
-      ret = edge_extractor_open(&edge_handle);
-      if (ret < 0) perror("[!] EDGE AXI stats mapping issue");
-      /* Select the hash mode */
-      edge_extractor_set_hash_mode(&edge_handle, edge_hash_mode);
-      {
-        /* Confirm the write landed */
-        edge_hash_mode_t got = edge_extractor_get_hash_mode(&edge_handle);
-        if (got != edge_hash_mode)
-          fprintf(stderr,
-                  "[!] Edge hash mode not applied: asked for %s, hardware reports %s. "
-                  "The loaded bitstream likely predates the hash-mode register; "
-                  "the CSV records what the hardware reports.\n",
-                  edge_hash_mode_name(edge_hash_mode), edge_hash_mode_name(got));
-      }
+      if (run_mode == RUN_MODE_FUZZ) {
+        ret = edge_extractor_open(&edge_handle);
+        if (ret < 0) perror("[!] EDGE AXI stats mapping issue");
+        /* Select the hash mode */
+        edge_extractor_set_hash_mode(&edge_handle, edge_hash_mode);
+        {
+          /* Confirm the write landed */
+          edge_hash_mode_t got = edge_extractor_get_hash_mode(&edge_handle);
+          if (got != edge_hash_mode)
+            fprintf(stderr,
+                    "[!] Edge hash mode not applied: asked for %s, hardware reports %s. "
+                    "The loaded bitstream likely predates the hash-mode register; "
+                    "the CSV records what the hardware reports.\n",
+                    edge_hash_mode_name(edge_hash_mode), edge_hash_mode_name(got));
+        }
 
-      ret = bitmap_dma_open(&dma_handle, DEFAULT_TRACE_BITMAP_SIZE);
-      if (ret < 0) perror("[!] Bitmap DMA setup issue");
+        ret = bitmap_dma_open(&dma_handle, DEFAULT_TRACE_BITMAP_SIZE);
+        if (ret < 0) perror("[!] Bitmap DMA setup issue");
+      } else {
+        ret = trace_capture_open(&cap_handle);
+        if (ret < 0) perror("[!] Trace capture setup issue");
+        cap_open = (ret == 0);
+      }
 
       ret = decoder_axi_open(&dec_axi_handle);
       if (ret < 0) perror("[!] Decoder AXI errors setup issue");
 
       // decoder_axi_soft_reset(&dec_axi_handle);
       decoder_stats_enable(&dec_stats_etm_handle);
-      edge_extractor_reset(&edge_handle);
       decoder_axi_stats_reset(&dec_axi_handle);
-      bitmap_dma_transfer(&dma_handle); // Clearing DMA
+      if (run_mode == RUN_MODE_FUZZ) {
+        edge_extractor_reset(&edge_handle);
+        bitmap_dma_transfer(&dma_handle); // Clearing DMA
+      } else if (cap_open) {
+        /* Armed before the ETM is enabled, the TPIU does not wait for anyone */
+        cap_armed = (trace_capture_arm(&cap_handle) == 0);
+        if (!cap_armed) fprintf(stderr, "[!] Trace capture could not be armed\n");
+      }
 
       /* Enable the ETM as late as possible as it emits its one and only
        * A-sync when it is enabled (syncpr = 0 disables periodic sync) */
@@ -274,12 +346,14 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
 
         printf("========== DEC STATS ============\n");
         decoder_stats_print(&dec_stats_etm_handle);
-        printf("============= EDGES =============\n");
-        edge_extractor_print(&edge_handle);
+        if (run_mode == RUN_MODE_FUZZ) {
+          printf("============= EDGES =============\n");
+          edge_extractor_print(&edge_handle);
+        }
         printf("============ DEC ERR ============\n");
         decoder_axi_print(&dec_axi_handle);
 
-        if (stats_csv_path) {
+        if (stats_csv_path && run_mode == RUN_MODE_FUZZ) {
           struct timespec csv_now;
           clock_gettime(CLOCK_MONOTONIC, &csv_now);
           double csv_child_s = (child_end.tv_sec - child_start.tv_sec) +
@@ -291,6 +365,25 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
           write_stats_csv(stats_csv_path, binary_name, &dec_stats_etm_handle,
                            &dec_axi_handle, &edge_handle,
                            csv_child_s, csv_instr_s, csv_global_s);
+        }
+
+        if (run_mode == RUN_MODE_CAPTURE) {
+          printf("============ CAPTURE ============\n");
+          /* fini_trace() above wrote cstrace.bin from the ETR, which is off in
+           * this mode: replace it with the frames captured in the PL, or remove
+           * it rather than leave stale ETR data behind */
+          if (cap_armed && trace_capture_finish(&cap_handle) == 0 &&
+              trace_capture_export(&cap_handle, DEFAULT_CAPTURE_NAME) == 0) {
+            printf("[+] Captured %" PRIu64 " frames (%zu bytes) into %s, %u dropped%s\n",
+                   cap_handle.frames_captured, cap_handle.trace_bytes,
+                   DEFAULT_CAPTURE_NAME, cap_handle.frames_dropped,
+                   cap_handle.truncated ? ", TRUNCATED" : "");
+          } else {
+            fprintf(stderr, "[!] Trace capture failed, removing %s\n", DEFAULT_CAPTURE_NAME);
+            unlink(DEFAULT_CAPTURE_NAME);
+          }
+          if (cap_open) trace_capture_close(&cap_handle);
+          goto teardown_done;
         }
 
         printf("============== DMA ==============\n");
@@ -324,9 +417,10 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
             }
         }
 
-
-        decoder_stats_close(&dec_stats_etm_handle);
         edge_extractor_close(&edge_handle);
+
+teardown_done:
+        decoder_stats_close(&dec_stats_etm_handle);
         decoder_axi_close(&dec_axi_handle);
 
         /* Instrumentation timer ends after full teardown */
@@ -427,6 +521,9 @@ static void usage(char *argv0)
           "PATH (default: disabled)\n");
   fprintf(stderr, "  -g, --hashmode=MODE\t\tedge hash mode: none, fuzzsight or "
                   "stalker (default %s)\n", edge_hash_mode_name(edge_hash_mode));
+  fprintf(stderr, "  -M, --mode=MODE\t\tfuzz (edge bitmap over the bitmap DMA) or "
+                  "capture (raw TPIU frames into cstrace.bin, forces the ETR off) "
+                  "(default %s)\n", run_mode_name(run_mode));
   fprintf(stderr, "  -h, --help\t\t\tshow this help\n");
 }
 
@@ -452,6 +549,7 @@ int main(int argc, char *argv[])
       {"notrace", optional_argument, NULL, 'n'},
       {"csv", required_argument, NULL, 'o'},
       {"hashmode", required_argument, NULL, 'g'},
+      {"mode", required_argument, NULL, 'M'},
       {"help", no_argument, NULL, 'h'},
       {0, 0, 0, 0},
   };
@@ -471,7 +569,7 @@ int main(int argc, char *argv[])
     exit(EXIT_SUCCESS);
   }
   /* Parse CLI elements */
-  while ((opt = getopt_long(argc, argv, "b:c:e:f:u:k:r:s:t:m:a:v:n::o:g:h", long_options,
+  while ((opt = getopt_long(argc, argv, "b:c:e:f:u:k:r:s:t:m:a:v:n::o:g:M:h", long_options,
                             &option_index)) != -1) {
     switch (opt) {
       /* Board name */
@@ -541,6 +639,16 @@ int main(int argc, char *argv[])
           exit(EXIT_FAILURE);
         }
         break;
+      case 'M':
+        if (!strcmp(optarg, "fuzz"))
+          run_mode = RUN_MODE_FUZZ;
+        else if (!strcmp(optarg, "capture"))
+          run_mode = RUN_MODE_CAPTURE;
+        else {
+          fprintf(stderr, "[!] Unknown mode '%s' (expected fuzz or capture)\n", optarg);
+          exit(EXIT_FAILURE);
+        }
+        break;
       case 'h':
         usage(argv[0]);
         exit(EXIT_SUCCESS);
@@ -548,6 +656,29 @@ int main(int argc, char *argv[])
       default:
         break;
     }
+  }
+
+  if (run_mode == RUN_MODE_CAPTURE) {
+    if (no_trace) {
+      fprintf(stderr, "[!] --mode=capture and --notrace are exclusive\n");
+      exit(EXIT_FAILURE);
+    }
+    if (use_etr) {
+      /* The trace DMA writes into the ETR's u-dma-buf by default, and
+       * fini_trace() dumps the ETR over cstrace.bin anyway */
+      printf("[~] Capture mode: ETR sink disabled, the trace leaves through the TPIU\n");
+      use_etr = false;
+    }
+    if (stats_csv_path)
+      fprintf(stderr, "[~] Capture mode: --csv is fuzz-mode only, ignored\n");
+  }
+
+  if (!no_trace && check_other_mode_idle() < 0) {
+    fprintf(stderr, "[!] Refusing to start in %s mode while the %s path is active: "
+                    "let that run finish, or reload the bitstream\n",
+            run_mode_name(run_mode),
+            run_mode == RUN_MODE_FUZZ ? "capture" : "fuzz");
+    exit(EXIT_FAILURE);
   }
 
   /* Check for missing tracee program */
