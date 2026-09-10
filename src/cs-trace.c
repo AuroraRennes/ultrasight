@@ -22,6 +22,7 @@
 #include <limits.h>
 #include <fcntl.h>
 #include <getopt.h>
+#include <errno.h>
 
 #include <sys/ptrace.h>
 #include <sys/types.h>
@@ -237,8 +238,13 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
   }
 
   while (1) {
-    /* Wait for the child process to stop */
-    waitpid(pid, &wstatus, WUNTRACED | WCONTINUED);
+    /* Wait for the child process to stop, bail out on error (e.g. ECHILD)
+       instead of busy-looping on an immediate -1 */
+    if (waitpid(pid, &wstatus, WUNTRACED | WCONTINUED) < 0) {
+      if (errno == EINTR) continue;
+      fprintf(stderr, "[!] waitpid(%d) failed: %s\n", pid, strerror(errno));
+      break;
+    }
 
     /** If the child process exited normally, stop and finalize the trace before
      * breaking from the loop else, if it was stopped using SIGSTOP, the
@@ -248,111 +254,108 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
       /* Child timer ends the moment the child exits */
       clock_gettime(CLOCK_MONOTONIC, &child_end);
 
-      if (wstatus == 0) {
-        printf("[+] Child exited with status %d\n", wstatus);
+      /* Finalize on any exit status: a non-zero exit (e.g. a rejected fuzz
+         input) still has a trace worth dumping */
+      printf("[+] Child exited with status %d\n", WEXITSTATUS(wstatus));
 
-        if (!no_trace) {
-          if (ksight_on) {
-            printf("[+] Disabling ksight tracing\n");
-            ksight_set_enable(0);
-            ksight_set_traced_pid(0);
-          }
-
-          printf("[+] Stopping and cleaning up trace\n");
-          stop_trace(true);
-          fini_trace();
-          printf("[+] Done!\n");
-
-          decoder_stats_disable(&dec_stats_etm_handle);
-
-          printf("========== DEC STATS ============\n");
-          decoder_stats_print(&dec_stats_etm_handle);
-          printf("============= EDGES =============\n");
-          edge_extractor_print(&edge_handle);
-          printf("============ DEC ERR ============\n");
-          decoder_axi_print(&dec_axi_handle);
-
-          if (stats_csv_path) {
-            struct timespec csv_now;
-            clock_gettime(CLOCK_MONOTONIC, &csv_now);
-            double csv_child_s = (child_end.tv_sec - child_start.tv_sec) +
-                                  (child_end.tv_nsec - child_start.tv_nsec) / 1e9;
-            /* instr/global here are measured a little before the "official"
-             * timers below (which also cover the DMA readout that follows),
-             * so they'll read a touch lower -- fine for stats comparison. */
-            double csv_instr_s = (csv_now.tv_sec - instr_start.tv_sec) +
-                                  (csv_now.tv_nsec - instr_start.tv_nsec) / 1e9;
-            double csv_global_s = (csv_now.tv_sec - global_start.tv_sec) +
-                                   (csv_now.tv_nsec - global_start.tv_nsec) / 1e9;
-            write_stats_csv(stats_csv_path, binary_name, &dec_stats_etm_handle,
-                             &dec_axi_handle, &edge_handle,
-                             csv_child_s, csv_instr_s, csv_global_s);
-          }
-
-          printf("============== DMA ==============\n");
-          printf("[+] Triggering bitmap DMA readout\n");
-          struct timespec dma_start, dma_end;
-          clock_gettime(CLOCK_MONOTONIC, &dma_start);
-          ret = bitmap_dma_transfer(&dma_handle);
-          clock_gettime(CLOCK_MONOTONIC, &dma_end);
-          double dma_elapsed_us = (dma_end.tv_sec - dma_start.tv_sec) * 1e6 +
-                                  (dma_end.tv_nsec - dma_start.tv_nsec) / 1e3;
-          if (ret < 0) perror("[!] Bitmap DMA transfer failed");
-          printf("[+] Bitmap DMA complete in %.2f us, %zu bytes in udmabuf\n",
-                 dma_elapsed_us, dma_handle.buf_size);
-
-          printf("[+] Bitmap non-zero entries:\n");
-          unsigned char *bmap = (unsigned char *)dma_handle.buf;
-          for (size_t i = 0; i < dma_handle.buf_size; i++) {
-              if (bmap[i] != 0) {
-                  printf("  [0x%04zx] = 0x%02x\n", i, bmap[i]);
-              }
-          }
-
-          printf("============= DMA 2 =============\n");
-          printf("[+] Triggering bitmap DMA readout\n");
-          ret = bitmap_dma_transfer(&dma_handle);
-          printf("[+] Bitmap non-zero entries:\n");
-          bmap = (unsigned char *)dma_handle.buf;
-          for (size_t i = 0; i < dma_handle.buf_size; i++) {
-              if (bmap[i] != 0) {
-                  printf("  [0x%04zx] = 0x%02x\n", i, bmap[i]);
-              }
-          }
-
-
-          decoder_stats_close(&dec_stats_etm_handle);
-          edge_extractor_close(&edge_handle);
-          decoder_axi_close(&dec_axi_handle);
-
-          /* Instrumentation timer ends after full teardown */
-          clock_gettime(CLOCK_MONOTONIC, &instr_end);
-          instr_elapsed = (instr_end.tv_sec - instr_start.tv_sec) +
-                          (instr_end.tv_nsec - instr_start.tv_nsec) / 1e9;
+      if (!no_trace) {
+        if (ksight_on) {
+          printf("[+] Disabling ksight tracing\n");
+          ksight_set_enable(0);
+          ksight_set_traced_pid(0);
         }
 
-        /* Global timer ends after everything */
-        clock_gettime(CLOCK_MONOTONIC, &global_end);
+        printf("[+] Stopping and cleaning up trace\n");
+        stop_trace(true);
+        fini_trace();
+        printf("[+] Done!\n");
 
-        child_elapsed = (child_end.tv_sec - child_start.tv_sec) +
-                        (child_end.tv_nsec - child_start.tv_nsec) / 1e9;
-        global_elapsed = (global_end.tv_sec - global_start.tv_sec) +
-                         (global_end.tv_nsec - global_start.tv_nsec) / 1e9;
+        decoder_stats_disable(&dec_stats_etm_handle);
 
-        /* Print all timers together */
-        printf("============= TIMING ============\n");
-        printf("[+] Child execution time:          %.6f seconds\n", child_elapsed);
-        if (!no_trace) {
-          printf("[+] Instrumentation time:          %.6f seconds\n", instr_elapsed);
-          printf("[+] Instrumentation overhead:      %.6f seconds\n", instr_elapsed - child_elapsed);
-          printf("[+] Fork/exec/waitpid stall:       %.6f seconds\n", global_elapsed - instr_elapsed);
-        } else {
-          printf("[+] Fork/exec/waitpid stall:       %.6f seconds\n", global_elapsed - child_elapsed);
+        printf("========== DEC STATS ============\n");
+        decoder_stats_print(&dec_stats_etm_handle);
+        printf("============= EDGES =============\n");
+        edge_extractor_print(&edge_handle);
+        printf("============ DEC ERR ============\n");
+        decoder_axi_print(&dec_axi_handle);
+
+        if (stats_csv_path) {
+          struct timespec csv_now;
+          clock_gettime(CLOCK_MONOTONIC, &csv_now);
+          double csv_child_s = (child_end.tv_sec - child_start.tv_sec) +
+                                (child_end.tv_nsec - child_start.tv_nsec) / 1e9;
+          double csv_instr_s = (csv_now.tv_sec - instr_start.tv_sec) +
+                                (csv_now.tv_nsec - instr_start.tv_nsec) / 1e9;
+          double csv_global_s = (csv_now.tv_sec - global_start.tv_sec) +
+                                 (csv_now.tv_nsec - global_start.tv_nsec) / 1e9;
+          write_stats_csv(stats_csv_path, binary_name, &dec_stats_etm_handle,
+                           &dec_axi_handle, &edge_handle,
+                           csv_child_s, csv_instr_s, csv_global_s);
         }
-        printf("[+] Global time:                   %.6f seconds\n", global_elapsed);
 
-        break;
+        printf("============== DMA ==============\n");
+        printf("[+] Triggering bitmap DMA readout\n");
+        struct timespec dma_start, dma_end;
+        clock_gettime(CLOCK_MONOTONIC, &dma_start);
+        ret = bitmap_dma_transfer(&dma_handle);
+        clock_gettime(CLOCK_MONOTONIC, &dma_end);
+        double dma_elapsed_us = (dma_end.tv_sec - dma_start.tv_sec) * 1e6 +
+                                (dma_end.tv_nsec - dma_start.tv_nsec) / 1e3;
+        if (ret < 0) perror("[!] Bitmap DMA transfer failed");
+        printf("[+] Bitmap DMA complete in %.2f us, %zu bytes in udmabuf\n",
+               dma_elapsed_us, dma_handle.buf_size);
+
+        printf("[+] Bitmap non-zero entries:\n");
+        unsigned char *bmap = (unsigned char *)dma_handle.buf;
+        for (size_t i = 0; i < dma_handle.buf_size; i++) {
+            if (bmap[i] != 0) {
+                printf("  [0x%04zx] = 0x%02x\n", i, bmap[i]);
+            }
+        }
+
+        printf("============= DMA 2 =============\n");
+        printf("[+] Triggering bitmap DMA readout\n");
+        ret = bitmap_dma_transfer(&dma_handle);
+        printf("[+] Bitmap non-zero entries:\n");
+        bmap = (unsigned char *)dma_handle.buf;
+        for (size_t i = 0; i < dma_handle.buf_size; i++) {
+            if (bmap[i] != 0) {
+                printf("  [0x%04zx] = 0x%02x\n", i, bmap[i]);
+            }
+        }
+
+
+        decoder_stats_close(&dec_stats_etm_handle);
+        edge_extractor_close(&edge_handle);
+        decoder_axi_close(&dec_axi_handle);
+
+        /* Instrumentation timer ends after full teardown */
+        clock_gettime(CLOCK_MONOTONIC, &instr_end);
+        instr_elapsed = (instr_end.tv_sec - instr_start.tv_sec) +
+                        (instr_end.tv_nsec - instr_start.tv_nsec) / 1e9;
       }
+
+      /* Global timer ends after everything */
+      clock_gettime(CLOCK_MONOTONIC, &global_end);
+
+      child_elapsed = (child_end.tv_sec - child_start.tv_sec) +
+                      (child_end.tv_nsec - child_start.tv_nsec) / 1e9;
+      global_elapsed = (global_end.tv_sec - global_start.tv_sec) +
+                       (global_end.tv_nsec - global_start.tv_nsec) / 1e9;
+
+      /* Print all timers together */
+      printf("============= TIMING ============\n");
+      printf("[+] Child execution time:          %.6f seconds\n", child_elapsed);
+      if (!no_trace) {
+        printf("[+] Instrumentation time:          %.6f seconds\n", instr_elapsed);
+        printf("[+] Instrumentation overhead:      %.6f seconds\n", instr_elapsed - child_elapsed);
+        printf("[+] Fork/exec/waitpid stall:       %.6f seconds\n", global_elapsed - instr_elapsed);
+      } else {
+        printf("[+] Fork/exec/waitpid stall:       %.6f seconds\n", global_elapsed - child_elapsed);
+      }
+      printf("[+] Global time:                   %.6f seconds\n", global_elapsed);
+
+      break;
     } else if (WIFCONTINUED(wstatus)) {
       // printf("[+] Child resumed by kernel\n");
     } else if (WIFSTOPPED(wstatus)) {
