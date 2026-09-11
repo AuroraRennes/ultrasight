@@ -282,8 +282,10 @@ int init_etm(cs_device_t dev)
   v4config.eventctlr0r = 0;
   v4config.eventctlr1r = 0;
 
-  /* Disable overflow & sync */
-  v4config.stallcrlr = (1 << 13); /* no overflow */
+  /* Stall the core instead of overflowing, and disable sync. NOOVERFLOW
+   * (bit 13) is not implemented on the A53 ETM (TRCIDR3.NOOVERFLOW=0), only
+   * STALLCTL is: ISTALL with the most invasive LEVEL keeps the trace lossless */
+  v4config.stallcrlr = (1 << 8) | (3 << 2); /* ISTALL, LEVEL=3 */
   v4config.syncpr = 0;            /* no sync */
   cs_etm_config_put_ex(dev, &v4config);
 
