@@ -18,6 +18,8 @@ typedef enum {
     EDGE_EXTRACTOR_TOTAL_HI    = 0x08,  // edges_total, upper 32 bits (latched at last LO read)
     EDGE_EXTRACTOR_OVERFLOW    = 0x0C,  // fifo_overflow_count
     EDGE_EXTRACTOR_FREEZE_DROP = 0x10,  // freeze_drop_count
+    EDGE_EXTRACTOR_RANGE_EN    = 0x14,  // bit 0 = range filter enable (bounds from decoder_axi)
+    EDGE_EXTRACTOR_RANGE_DROP  = 0x18,  // range_drop_count
 } edge_extractor_reg_t;
 
 /* Control register bits */
@@ -61,11 +63,21 @@ static inline edge_hash_mode_t edge_extractor_get_hash_mode(edge_extractor_t *ha
     return (edge_hash_mode_t)((ctrl & EDGE_EXTRACTOR_CTRL_HASH_MODE_MASK) >> EDGE_EXTRACTOR_CTRL_HASH_MODE_SHIFT);
 }
 
+/* Drop atom packets whose effective address is outside the decoder's trace
+ * range, set with decoder_axi_set_range() (e.g. the traced binary's text
+ * mapping from /proc/pid/maps). The same range filters the decoder's exceptions,
+ * so both always agree. Replaces the ETM's own address range filter, which
+ * overflows the ETM FIFO. Off at reset. Like the hash mode, only change it
+ * while the freeze request is asserted. */
+static inline void edge_extractor_set_range_filter(edge_extractor_t *handle, int enable)
+    { axi_regs_write(handle, EDGE_EXTRACTOR_RANGE_EN, enable ? 1 : 0); }
+
 /* Description used in the print */
 static axi_reg_desc_t edge_extractor_descs[] = {
     {"Edges total (lo)", EDGE_EXTRACTOR_TOTAL_LO},
     {"FIFO overflow", EDGE_EXTRACTOR_OVERFLOW},
     {"Freeze drops",  EDGE_EXTRACTOR_FREEZE_DROP},
+    {"Range drops",   EDGE_EXTRACTOR_RANGE_DROP},
 };
 
 /* Full 64-bit edges_total. The hardware latches the high word on the LO read

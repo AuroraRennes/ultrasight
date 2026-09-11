@@ -17,6 +17,12 @@
 
 #define TRACE_CAPTURE_TIMEOUT_S 1.0
 
+/* Drain wait for a stale TLAST */
+#define TRACE_CAPTURE_DRAIN_WINDOW_S 0.01
+
+/* Caps the S2MM transfer below the u-dma-buf size */
+#define TRACE_MAX_BYTES_ENV "ULTRASIGHT_TRACE_MAX_BYTES"
+
 // AXI DMA S2MM status error bits: DMAIntErr, DMASlvErr, DMADecErr
 #define STATUS_ERR_MASK             (0x7 << 4)
 
@@ -27,18 +33,62 @@ static double now_s(void)
     return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
-/* Poll `regs[offset] & mask` until it equals `want`, bounded in time */
+/* Poll `regs[offset] & mask` until it equals `want`, for at most `timeout_s` */
+static int poll_bits(axi_regs_t *regs, uint32_t offset, uint32_t mask,
+                     uint32_t want, double timeout_s)
+{
+    double deadline = now_s() + timeout_s;
+    while ((axi_regs_read(regs, offset) & mask) != want) {
+        if (now_s() > deadline)
+            return -1;
+    }
+    return 0;
+}
+
+/* poll_bits() with the default timeout, reporting a timeout */
 static int wait_bits(axi_regs_t *regs, uint32_t offset, uint32_t mask,
                      uint32_t want, const char *what)
 {
-    double deadline = now_s() + TRACE_CAPTURE_TIMEOUT_S;
-    while ((axi_regs_read(regs, offset) & mask) != want) {
-        if (now_s() > deadline) {
-            fprintf(stderr, "[!] Trace capture: timed out waiting for %s\n", what);
-            return -1;
-        }
+    if (poll_bits(regs, offset, mask, want, TRACE_CAPTURE_TIMEOUT_S) < 0) {
+        fprintf(stderr, "[!] Trace capture: timed out waiting for %s\n", what);
+        return -1;
     }
     return 0;
+}
+
+static int dma_reset(trace_capture_t *h)
+{
+    axi_regs_write(&h->dma, S2MM_CONTROL_REGISTER, RESET_DMA);
+    return wait_bits(&h->dma, S2MM_CONTROL_REGISTER, RESET_DMA, 0, "DMA reset");
+}
+
+/* Drain frames an earlier truncated or killed capture left queued before the
+ * DMA (a DMA reset does not clear them), else the next transfer ends early on
+ * their stale TLAST. Stops the capture if still enabled, then runs a throwaway
+ * transfer. Overwrites the start of the buffer, so only call it before a capture */
+static int drain_stale(trace_capture_t *h)
+{
+    uint32_t st = axi_regs_read(&h->capture, TRACE_CAPTURE_STATUS);
+    if (st & TRACE_CAPTURE_ST_ENABLED)
+        axi_regs_write(&h->capture, TRACE_CAPTURE_CTRL, TRACE_CAPTURE_CTRL_FLUSH);
+
+    if (dma_reset(h) < 0)
+        return -1;
+    axi_regs_write(&h->dma, S2MM_CONTROL_REGISTER, ENABLE_ALL_IRQ);
+    axi_regs_write(&h->dma, S2MM_DST_ADDRESS_REGISTER, h->dst_addr);
+    axi_regs_write(&h->dma, S2MM_CONTROL_REGISTER, RUN_DMA | ENABLE_ALL_IRQ);
+    axi_regs_write(&h->dma, S2MM_BUFF_LENGTH_REGISTER, h->length);
+
+    if (poll_bits(&h->dma, S2MM_STATUS_REGISTER, STATUS_IDLE, STATUS_IDLE,
+                  TRACE_CAPTURE_DRAIN_WINDOW_S) == 0) {
+        uint32_t stale = axi_regs_read(&h->dma, S2MM_BUFF_LENGTH_REGISTER);
+        fprintf(stderr, "[~] Trace capture: drained %u stale bytes left by an "
+                "earlier capture (status was 0x%08x)\n", stale, st);
+    }
+    if (wait_bits(&h->capture, TRACE_CAPTURE_STATUS, TRACE_CAPTURE_ST_FLUSH_BUSY, 0,
+                  "a stale flush pad") < 0)
+        return -1;
+    return dma_reset(h);
 }
 
 int trace_capture_open(trace_capture_t *h)
@@ -67,6 +117,11 @@ int trace_capture_open(trace_capture_t *h)
 
     /* Whole frames only, and within the DMA's length register */
     h->length = h->buf_size < TRACE_DMA_MAX_LENGTH ? h->buf_size : TRACE_DMA_MAX_LENGTH;
+    const char *max_bytes = getenv(TRACE_MAX_BYTES_ENV);
+    if (max_bytes && *max_bytes) {
+        size_t cap = strtoull(max_bytes, NULL, 0);
+        if (cap < h->length) h->length = cap;
+    }
     h->length -= h->length % TRACE_CAPTURE_FRAME_BYTES;
     if (h->length < 2 * TRACE_CAPTURE_FRAME_BYTES) {
         fprintf(stderr, "[!] u-dma-buf '%s' too small for a trace capture\n", udmabuf_name);
@@ -107,8 +162,7 @@ void trace_capture_close(trace_capture_t *h)
  * enabled, the TPIU does not wait for anyone */
 int trace_capture_arm(trace_capture_t *h)
 {
-    axi_regs_write(&h->dma, S2MM_CONTROL_REGISTER, RESET_DMA);
-    if (wait_bits(&h->dma, S2MM_CONTROL_REGISTER, RESET_DMA, 0, "DMA reset") < 0)
+    if (drain_stale(h) < 0)
         return -1;
     axi_regs_write(&h->dma, S2MM_CONTROL_REGISTER, ENABLE_ALL_IRQ);
     axi_regs_write(&h->dma, S2MM_DST_ADDRESS_REGISTER, h->dst_addr);
@@ -137,7 +191,8 @@ int trace_capture_finish(trace_capture_t *h)
 
     if (h->truncated) {
         /* The DMA stopped at h->length without seeing TLAST, the rest of the
-         * trace (and the pad) is stuck upstream. Reset clears it */
+         * trace (and the pad) is stuck upstream. The DMA reset does not clear
+         * it, the next trace_capture_arm() drains it */
         wait_bits(&h->dma, S2MM_STATUS_REGISTER, STATUS_IDLE, STATUS_IDLE, "DMA idle");
         fprintf(stderr, "[!] Trace capture: buffer full, trace truncated to %zu bytes "
                 "(%" PRIu64 " frames captured)\n", h->length, h->frames_captured);
