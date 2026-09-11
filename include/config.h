@@ -7,6 +7,16 @@
 
 #include "utils.h"
 
+/* Where the tracee's address range is enforced:
+ *  - PL:   the ETM traces all of EL0 for the tracee's CID, and the decoder and
+ *          edge_extractor drop what lies outside the tracee text. Filtering in
+ *          the ETM turns every call into an untraced library into a TRACE_ON
+ *          burst, which overflows its FIFO
+ *  - ETM:  the ETM's address comparators only trace the tracee text
+ *  - NONE: all of EL0 for the tracee's CID, no filter anywhere */
+typedef enum { ADDR_FILTER_PL, ADDR_FILTER_ETM, ADDR_FILTER_NONE } addr_filter_t;
+extern addr_filter_t addr_filter;
+
 void cs_etb_flush_and_wait_stop(struct cs_devices_t *devices);
 void cs_tpiu_flush_and_wait_stop(struct cs_devices_t *devices);
 int init_etm(cs_device_t dev);

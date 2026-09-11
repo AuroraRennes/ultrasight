@@ -25,6 +25,9 @@
 
 #define SHOW_ETM_CONFIG 0
 
+/* Last EL0 address with 48-bit VAs, the ETM comparator end is inclusive */
+#define EL0_VA_END 0x0000FFFFFFFFFFFFUL
+
 const bool return_stack = false;
 const bool cycle_count = false;
 
@@ -187,11 +190,14 @@ static int configure_etmv4_addr_range_cid(cs_device_t etm,
     tconfig.flags |= CS_ETMC_CXID_COMP;
   }
 
-  /* Set up address range filtering */
+  /* Set up address range filtering. The comparator pair also carries the CID
+   * match, so without the ETM filter it stays in place, widened to all of EL0:
+   * the trace then only turns on and off at context switches */
   addridx = 0;
+  struct map_info el0 = {.start = 0, .end = EL0_VA_END};
   /* Note: Assumes range[0] is the tracee itself. */
-  /* Set the address range for the tracee program */
-  set_etmv4_addr_range(&range[0], &tconfig.addr_comps[addridx],
+  struct map_info *etm_range = addr_filter == ADDR_FILTER_ETM ? &range[0] : &el0;
+  set_etmv4_addr_range(etm_range, &tconfig.addr_comps[addridx],
                        cid > 0 ? (cididx << 4) | (0x1 << 2) : 0);
   /* Activates the address comparator mask */
   tconfig.addr_comps_acc_mask |= 0x3 << addridx;

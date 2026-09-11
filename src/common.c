@@ -90,6 +90,8 @@ bool ksight_on = false;
 size_t ksight_ram_addr = 0;
 int range_count = 0;
 struct map_info map_info[RANGE_MAX];
+/* ETM keeps the former behaviour for every user of this file, cs-trace sets it */
+addr_filter_t addr_filter = ADDR_FILTER_ETM;
 
 bool use_etr = true;
 bool use_stm = true;

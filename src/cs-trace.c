@@ -61,6 +61,18 @@ extern bool ksight_on;
 extern int trace_cpu;
 extern unsigned char *trace_bitmap;
 extern unsigned int trace_bitmap_size;
+extern int range_count;
+extern struct map_info map_info[];
+
+static const char *addr_filter_name(addr_filter_t f)
+{
+  switch (f) {
+    case ADDR_FILTER_PL:   return "pl";
+    case ADDR_FILTER_ETM:  return "etm";
+    case ADDR_FILTER_NONE: return "none";
+  }
+  return "?";
+}
 
 /* CSV stats logging, off by default; set via -o/--csv=PATH. Appends one
  * row per run so a benchmark suite can be run as repeated cs-trace
@@ -280,6 +292,28 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
 
       ret = decoder_axi_open(&dec_axi_handle);
       if (ret < 0) perror("[!] Decoder AXI errors setup issue");
+
+      /* The decoder range and the edge filter enable outlive a run, so write
+       * both every time. The decoder applies the range to its exceptions, the
+       * edge_extractor drops out-of-range atoms with it (PL filter only) */
+      printf("[~] Address filter: %s\n", addr_filter_name(addr_filter));
+      if (addr_filter == ADDR_FILTER_NONE || range_count == 0) {
+        if (addr_filter != ADDR_FILTER_NONE)
+          fprintf(stderr, "[!] No traced range, the decoder range stays open\n");
+        decoder_axi_set_range(&dec_axi_handle, 0, UINT64_MAX);
+      } else {
+        decoder_axi_set_range(&dec_axi_handle, map_info[0].start, map_info[0].end);
+      }
+      decoder_axi_print_range(&dec_axi_handle);
+      if (run_mode == RUN_MODE_FUZZ) {
+        int want = addr_filter == ADDR_FILTER_PL;
+        edge_extractor_set_range_filter(&edge_handle, want);
+        /* Confirm the write landed */
+        if ((int)(axi_regs_read(&edge_handle, EDGE_EXTRACTOR_RANGE_EN) & 1) != want)
+          fprintf(stderr,
+                  "[!] Edge range filter not applied: the loaded bitstream likely "
+                  "predates the range-enable register\n");
+      }
 
       // decoder_axi_soft_reset(&dec_axi_handle);
       decoder_stats_enable(&dec_stats_etm_handle);
@@ -524,6 +558,10 @@ static void usage(char *argv0)
   fprintf(stderr, "  -M, --mode=MODE\t\tfuzz (edge bitmap over the bitmap DMA) or "
                   "capture (raw TPIU frames into cstrace.bin, forces the ETR off) "
                   "(default %s)\n", run_mode_name(run_mode));
+  fprintf(stderr, "  -F, --addrfilter=MODE\t\twhere the tracee text range is enforced: "
+                  "pl (decoder + edge_extractor, the ETM traces all of EL0), etm "
+                  "(ETM address comparators) or none (default %s)\n",
+                  addr_filter_name(addr_filter));
   fprintf(stderr, "  -h, --help\t\t\tshow this help\n");
 }
 
@@ -550,6 +588,7 @@ int main(int argc, char *argv[])
       {"csv", required_argument, NULL, 'o'},
       {"hashmode", required_argument, NULL, 'g'},
       {"mode", required_argument, NULL, 'M'},
+      {"addrfilter", required_argument, NULL, 'F'},
       {"help", no_argument, NULL, 'h'},
       {0, 0, 0, 0},
   };
@@ -562,6 +601,8 @@ int main(int argc, char *argv[])
   argvp = NULL;
   registration_verbose = 0;
   trace_bitmap_size = DEFAULT_TRACE_BITMAP_SIZE;
+  /* The PL filter replaces the ETM's, which overflows the ETM FIFO */
+  addr_filter = ADDR_FILTER_PL;
 
   /* Check argument count */
   if (argc < 3) {
@@ -569,7 +610,7 @@ int main(int argc, char *argv[])
     exit(EXIT_SUCCESS);
   }
   /* Parse CLI elements */
-  while ((opt = getopt_long(argc, argv, "b:c:e:f:u:k:r:s:t:m:a:v:n::o:g:M:h", long_options,
+  while ((opt = getopt_long(argc, argv, "b:c:e:f:u:k:r:s:t:m:a:v:n::o:g:M:F:h", long_options,
                             &option_index)) != -1) {
     switch (opt) {
       /* Board name */
@@ -646,6 +687,19 @@ int main(int argc, char *argv[])
           run_mode = RUN_MODE_CAPTURE;
         else {
           fprintf(stderr, "[!] Unknown mode '%s' (expected fuzz or capture)\n", optarg);
+          exit(EXIT_FAILURE);
+        }
+        break;
+      case 'F':
+        if (!strcmp(optarg, "pl"))
+          addr_filter = ADDR_FILTER_PL;
+        else if (!strcmp(optarg, "etm"))
+          addr_filter = ADDR_FILTER_ETM;
+        else if (!strcmp(optarg, "none"))
+          addr_filter = ADDR_FILTER_NONE;
+        else {
+          fprintf(stderr, "[!] Unknown address filter '%s' "
+                          "(expected pl, etm or none)\n", optarg);
           exit(EXIT_FAILURE);
         }
         break;
