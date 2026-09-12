@@ -203,6 +203,18 @@ static int configure_etmv4_addr_range_cid(cs_device_t etm,
   tconfig.addr_comps_acc_mask |= 0x3 << addridx;
   tconfig.viiectlr |= 1 << (addridx / 2);
 
+  /* Restrict branch broadcast with the next comparator pair over the tracee
+   * text: TRCBBCTLR.RANGE selects the pair, MODE (bit 8) is 1 to broadcast
+   * inside it, 0 to broadcast outside it. RANGE=0 in exclude mode (the clean
+   * state) broadcasts everywhere */
+  tconfig.bbctlr = 0;
+  if (branch_broadcast && bb_filter != BB_FILTER_ALL && range_count > 0) {
+    size_t bbidx = addridx + 2;
+    set_etmv4_addr_range(&range[0], &tconfig.addr_comps[bbidx], 0);
+    tconfig.addr_comps_acc_mask |= 0x3 << bbidx;
+    tconfig.bbctlr = (1 << (bbidx / 2)) | (bb_filter == BB_FILTER_IN ? 1 << 8 : 0);
+  }
+
   tconfig.flags |= CS_ETMC_ADDR_COMP;
 
   /* Mark the configuration ready to be written back into the above registers on

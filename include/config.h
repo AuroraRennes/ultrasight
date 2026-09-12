@@ -17,6 +17,14 @@
 typedef enum { ADDR_FILTER_PL, ADDR_FILTER_ETM, ADDR_FILTER_NONE } addr_filter_t;
 extern addr_filter_t addr_filter;
 
+/* Where branch broadcast applies when it is on (TRCBBCTLR over the tracee
+ * text, on the second address comparator pair):
+ *  - ALL: everywhere the ETM traces
+ *  - OUT: outside the tracee text only (libraries), atoms inside it
+ *  - IN:  inside the tracee text only, atoms in the libraries */
+typedef enum { BB_FILTER_ALL, BB_FILTER_OUT, BB_FILTER_IN } bb_filter_t;
+extern bb_filter_t bb_filter;
+
 void cs_etb_flush_and_wait_stop(struct cs_devices_t *devices);
 void cs_tpiu_flush_and_wait_stop(struct cs_devices_t *devices);
 int init_etm(cs_device_t dev);

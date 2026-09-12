@@ -74,6 +74,16 @@ static const char *addr_filter_name(addr_filter_t f)
   return "?";
 }
 
+static const char *bb_filter_name(bb_filter_t f)
+{
+  switch (f) {
+    case BB_FILTER_ALL: return "all";
+    case BB_FILTER_OUT: return "out";
+    case BB_FILTER_IN:  return "in";
+  }
+  return "?";
+}
+
 /* CSV stats logging, off by default; set via -o/--csv=PATH. Appends one
  * row per run so a benchmark suite can be run as repeated cs-trace
  * invocations and compared afterwards. */
@@ -297,6 +307,8 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
        * both every time. The decoder applies the range to its exceptions, the
        * edge_extractor drops out-of-range atoms with it (PL filter only) */
       printf("[~] Address filter: %s\n", addr_filter_name(addr_filter));
+      printf("[~] Branch broadcast: %s\n",
+             branch_broadcast ? bb_filter_name(bb_filter) : "off");
       if (addr_filter == ADDR_FILTER_NONE || range_count == 0) {
         if (addr_filter != ADDR_FILTER_NONE)
           fprintf(stderr, "[!] No traced range, the decoder range stays open\n");
@@ -562,6 +574,9 @@ static void usage(char *argv0)
                   "pl (decoder + edge_extractor, the ETM traces all of EL0), etm "
                   "(ETM address comparators) or none (default %s)\n",
                   addr_filter_name(addr_filter));
+  fprintf(stderr, "  -B, --bbfilter=MODE\t\twhere branch broadcast applies: all, "
+                  "out (outside the tracee text) or in (inside it) (default %s)\n",
+                  bb_filter_name(bb_filter));
   fprintf(stderr, "  -h, --help\t\t\tshow this help\n");
 }
 
@@ -589,6 +604,7 @@ int main(int argc, char *argv[])
       {"hashmode", required_argument, NULL, 'g'},
       {"mode", required_argument, NULL, 'M'},
       {"addrfilter", required_argument, NULL, 'F'},
+      {"bbfilter", required_argument, NULL, 'B'},
       {"help", no_argument, NULL, 'h'},
       {0, 0, 0, 0},
   };
@@ -610,7 +626,7 @@ int main(int argc, char *argv[])
     exit(EXIT_SUCCESS);
   }
   /* Parse CLI elements */
-  while ((opt = getopt_long(argc, argv, "b:c:e:f:u:k:r:s:t:m:a:v:n::o:g:M:F:h", long_options,
+  while ((opt = getopt_long(argc, argv, "b:c:e:f:u:k:r:s:t:m:a:v:n::o:g:M:F:B:h", long_options,
                             &option_index)) != -1) {
     switch (opt) {
       /* Board name */
@@ -700,6 +716,19 @@ int main(int argc, char *argv[])
         else {
           fprintf(stderr, "[!] Unknown address filter '%s' "
                           "(expected pl, etm or none)\n", optarg);
+          exit(EXIT_FAILURE);
+        }
+        break;
+      case 'B':
+        if (!strcmp(optarg, "all"))
+          bb_filter = BB_FILTER_ALL;
+        else if (!strcmp(optarg, "out"))
+          bb_filter = BB_FILTER_OUT;
+        else if (!strcmp(optarg, "in"))
+          bb_filter = BB_FILTER_IN;
+        else {
+          fprintf(stderr, "[!] Unknown branch broadcast filter '%s' "
+                          "(expected all, out or in)\n", optarg);
           exit(EXIT_FAILURE);
         }
         break;
