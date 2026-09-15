@@ -6,7 +6,7 @@ tracecliff cli — single entry point aggregating every tracecliff subcommand.
 Subcommands:
     sweep-addr       drive cs-trace over bench_addr.c binaries
     gen-chain        emit chain-mode stub assembly for bench_addr.c's chain mode
-    analyze          read sweep CSVs back and compute loss%
+    analyze          read sweep CSVs back and report loss%
     axes             print the sweep axes (--make: as Make variables, for axes.mk)
     run-all          run sweep-addr (kind=loop, kind=chain) sequentially,
                      sharing cs-trace/cs-flags/runs and the swept factors
@@ -116,8 +116,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = subparsers.add_parser(
         "analyze",
-        help="read sweep CSVs back and compute loss%%",
-        description="Read sweep CSVs back and compute loss% and delivered edge rate.\n\n"
+        help="read sweep CSVs back and report loss%%",
+        description="Read sweep CSVs back and report loss% and delivered edge rate.\n\n"
         "Example:\n"
         "    python3 -m tracecliff analyze --csv-out",
         formatter_class=argparse.RawDescriptionHelpFormatter,

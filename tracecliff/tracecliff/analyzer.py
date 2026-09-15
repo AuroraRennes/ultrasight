@@ -2,6 +2,8 @@
 analyzer.py — compute CoreSight ETM overflow-sweep results.
 
     tracecliff analyze [files...] [--csv-out]
+
+reporter.py prints the text report from the points computed here.
 """
 
 import argparse
@@ -398,6 +400,11 @@ def analyze_file(path, csv_out):
         reference_branch_times(points, baselines),
         reference_bytes_per_atom(points, baselines),
     )
+
+    # Imported here: reporter imports back from this module.
+    from tracecliff import reporter
+
+    reporter.report(points, kind, path.name)
 
     if csv_out:
         ANALYZED_DIR_DEFAULT.mkdir(parents=True, exist_ok=True)
