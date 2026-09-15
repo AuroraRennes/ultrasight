@@ -14,9 +14,11 @@ iters, etr, run) into the combined output CSV.
 
 Flags:
     --cs-trace    path to cs-trace binary (required)
-    --bench-dir   directory containing bench_n*_s*_i* binaries (default: bin/addr_loop)
+    --bench-dir   directory containing bench_n*_s*_i* binaries
+                  (default: bin/addr_loop or bin/addr_chain, from --kind)
     --cs-flags    fixed flags passed to cs-trace for every run (e.g. "-b ZCU-104 -c 0")
     --runs        repetitions per point (default: 3)
+    --kind        loop (bench_*) | chain (bench_chain_*) (default: loop)
     --etr-list    --useetr values to sweep (default: 0 1)
                   1 = ETR enabled as a trace sink (default)
                   0 = ETR skipped, TPIU as the only trace sink (on PL)
@@ -41,8 +43,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-DEFAULT_BENCH_SUBDIR = "bin/addr_loop"
-BIN_PREFIX = "bench"
+DEFAULT_BENCH_SUBDIR = {"loop": "bin/addr_loop", "chain": "bin/addr_chain"}
+BIN_PREFIX = {"loop": "bench", "chain": "bench_chain"}
 
 # Sweep axes — must match Makefile's ADDR_N_LIST / ADDR_STRIDE_LIST / ITERS_LIST
 N_LIST = [1, 2, 3, 4, 8, 16, 32, 64]
@@ -127,8 +129,13 @@ class Config:
     bench_dir: Path
     cs_flags: list[str]
     runs: int
+    kind: str
     etr_list: list[int]
     bb_list: list[int]
+
+    @property
+    def bin_prefix(self) -> str:
+        return BIN_PREFIX[self.kind]
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +153,7 @@ def cs_flags_for(cfg: Config, etr: int, bb: int) -> list[str]:
 
 
 def binary_path(cfg: Config, n: int, s: int, iters: int) -> Path:
-    return cfg.bench_dir / f"{BIN_PREFIX}_n{n}_s{s}_i{iters}"
+    return cfg.bench_dir / f"{cfg.bin_prefix}_n{n}_s{s}_i{iters}"
 
 
 def run_once(cfg: Config, binary: Path, flags: list[str]) -> dict:
@@ -255,12 +262,13 @@ def run(cfg: Config) -> None:
     timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S%z")
     etr_tag = "-".join(str(e) for e in sorted(set(cfg.etr_list)))
     bb_tag = "-".join(str(b) for b in sorted(set(cfg.bb_list)))
-    csv_path = results_dir / f"addr_loop_etr{etr_tag}_bb{bb_tag}_{timestamp}.csv"
+    csv_path = results_dir / f"addr_{cfg.kind}_etr{etr_tag}_bb{bb_tag}_{timestamp}.csv"
 
     print(f"cs-trace : {cfg.cs_trace}")
     print(f"bench_dir: {cfg.bench_dir}")
     print(f"cs_flags : {cfg.cs_flags or '(none)'}")
     print(f"runs/pt  : {cfg.runs}")
+    print(f"kind     : {cfg.kind} ({cfg.bin_prefix})")
     print(f"etr_list : {cfg.etr_list}")
     print(f"bb_list  : {cfg.bb_list}")
     print(f"csv      : {csv_path}")
@@ -279,7 +287,8 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         "--bench-dir",
         type=Path,
         default=None,
-        help="directory containing bench_n*_s*_i* binaries (default: bin/addr_loop)",
+        help="directory containing bench_n*_s*_i* binaries "
+        "(default: bin/addr_loop or bin/addr_chain, from --kind)",
     )
     parser.add_argument(
         "--cs-flags",
@@ -288,6 +297,12 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--runs", type=int, default=3, help="repetitions per point (default: 3)"
+    )
+    parser.add_argument(
+        "--kind",
+        choices=["loop", "chain"],
+        default="loop",
+        help="loop (bench_*) | chain (bench_chain_*) (default: loop)",
     )
     parser.add_argument(
         "--etr-list",
@@ -306,12 +321,13 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def config_from_args(args: argparse.Namespace) -> Config:
-    bench_dir = args.bench_dir or (REPO_ROOT / DEFAULT_BENCH_SUBDIR)
+    bench_dir = args.bench_dir or (REPO_ROOT / DEFAULT_BENCH_SUBDIR[args.kind])
     return Config(
         cs_trace=args.cs_trace,
         bench_dir=Path(bench_dir),
         cs_flags=shlex.split(args.cs_flags),
         runs=args.runs,
+        kind=args.kind,
         etr_list=args.etr_list,
         bb_list=args.bb_list,
     )

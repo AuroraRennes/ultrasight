@@ -36,6 +36,24 @@
 #define ITERS 100000
 #endif
 
+#ifdef CHAIN
+/* ------------------------------------------------------------------ */
+/* Chain mode: t0..t(N_TARGETS-1) are hand-written in chain_nN_sS.S   */
+/* (see gen_chain.py). One call to t0 unconditionally BRs through all */
+/* N_TARGETS stubs ("a lap") and returns via a single RET at the far  */
+/* end                                                                */
+/* ------------------------------------------------------------------ */
+extern void t0(void);
+
+static void bench(void)
+{
+    unsigned long laps = ((unsigned long)ITERS + N_TARGETS - 1) / N_TARGETS;
+    for (unsigned long i = 0; i < laps; i++) {
+        t0();
+    }
+}
+
+#else
 /* ------------------------------------------------------------------ */
 /* Loop mode: 64 unique noinline stubs Each has a distinct body so    */
 /* the linker places them at separate addresses, STUB_STRIDE bytes    */
@@ -103,6 +121,7 @@ static void bench(void)
         table[idx_sink]();
     }
 }
+#endif /* CHAIN */
 
 /* ------------------------------------------------------------------ */
 /* Timing                                                             */
@@ -116,8 +135,10 @@ static uint64_t now_ns(void)
 
 int main(void)
 {
+#ifndef CHAIN
     for (int i = 0; i < N_TARGETS; i++)
         table[i] = all_targets[i];
+#endif
 
     /* Warmup: cold-cache effects skew the first run */
     bench();
@@ -129,14 +150,31 @@ int main(void)
     uint64_t elapsed_ns = ts1 - ts0;
     double   elapsed_s  = (double)elapsed_ns * 1e-9;
     double   br_per_s   = (double)ITERS / elapsed_s;
+#ifdef CHAIN
+    /* Each hop is a single indirect BR = 1 address packet at up to 9 bytes */
+    double   est_bw_mbs = br_per_s * 1.0 * 9.0 / 1e6;
+#else
     /* Each indirect call + return = 2 address packets at up to 9 bytes each */
     double   est_bw_mbs = br_per_s * 2.0 * 9.0 / 1e6;
+#endif
 
     printf("n_targets=%-3d  stub_stride=%-5d  iters=%d  mode=%s\n",
-           N_TARGETS, STUB_STRIDE, ITERS, "loop");
+           N_TARGETS, STUB_STRIDE, ITERS,
+#ifdef CHAIN
+           "chain"
+#else
+           "loop"
+#endif
+           );
     printf("elapsed=%.6f s  branches/s=%.0f\n", elapsed_s, br_per_s);
     printf("est_trace_bw=%.1f MB/s  (%s addr pkts x 9 B worst-case)\n",
-           est_bw_mbs, "2");
+           est_bw_mbs,
+#ifdef CHAIN
+           "1"
+#else
+           "2"
+#endif
+           );
 
     return 0;
 }

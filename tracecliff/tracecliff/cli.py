@@ -5,7 +5,9 @@ tracecliff cli — single entry point aggregating every tracecliff subcommand.
 
 Subcommands:
     sweep-addr       drive cs-trace over bench_addr.c binaries
-    run-all          run sweep-addr, sharing cs-trace/cs-flags/runs/etr-list/bb-list
+    gen-chain        emit chain-mode stub assembly for bench_addr.c's chain mode
+    run-all          run sweep-addr (kind=loop, kind=chain) sequentially,
+                     sharing cs-trace/cs-flags/runs/etr-list/bb-list
 
 sweep-addr and run-all must be run as root (cs-trace needs /dev/mem access), e.g.:
 
@@ -16,7 +18,7 @@ import argparse
 import shlex
 from pathlib import Path
 
-from tracecliff import sweep
+from tracecliff import gen_chain, sweep
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -50,16 +52,18 @@ def add_run_all_arguments(parser: argparse.ArgumentParser) -> None:
 def run_all(args: argparse.Namespace) -> None:
     cs_flags = shlex.split(args.cs_flags)
 
-    addr_cfg = sweep.Config(
-        cs_trace=args.cs_trace,
-        bench_dir=REPO_ROOT / sweep.DEFAULT_BENCH_SUBDIR,
-        cs_flags=cs_flags,
-        runs=args.runs,
-        etr_list=args.etr_list,
-        bb_list=args.bb_list,
-    )
-    print("=== addr_loop ===")
-    sweep.run(addr_cfg)
+    for kind in ("loop", "chain"):
+        addr_cfg = sweep.Config(
+            cs_trace=args.cs_trace,
+            bench_dir=REPO_ROOT / sweep.DEFAULT_BENCH_SUBDIR[kind],
+            cs_flags=cs_flags,
+            runs=args.runs,
+            kind=kind,
+            etr_list=args.etr_list,
+            bb_list=args.bb_list,
+        )
+        print(f"=== addr_{kind} ===")
+        sweep.run(addr_cfg)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -83,9 +87,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=lambda args: sweep.run(sweep.config_from_args(args)))
 
     p = subparsers.add_parser(
+        "gen-chain",
+        help="emit chain-mode stub assembly",
+        description="Emit the hand-written chain-mode stub assembly used by bench_addr.c's chain mode.\n\n"
+        "Example:\n"
+        "    python3 -m tracecliff gen-chain 8 64 > chains/chain_n8_s64.S",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    gen_chain.add_arguments(p)
+    p.set_defaults(func=lambda args: gen_chain.run(args.n_targets, args.stub_stride))
+
+    p = subparsers.add_parser(
         "run-all",
-        help="run sweep-addr",
-        description="Run sweep-addr, "
+        help="run sweep-addr (loop, chain) sequentially",
+        description="Run sweep-addr (kind=loop, kind=chain) sequentially, "
         "sharing cs-trace/cs-flags/runs/etr-list/bb-list. Must be run as root.\n\n"
         "Example:\n"
         "    sudo python3 -m tracecliff run-all --cs-trace /path/to/cs-trace",

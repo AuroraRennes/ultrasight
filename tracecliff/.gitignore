@@ -1,5 +1,7 @@
 bin/*
 !bin/README.md
+chains/*
+!chains/README.md
 results/*
 !results/README.md
 

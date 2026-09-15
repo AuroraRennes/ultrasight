@@ -7,6 +7,7 @@ Naming: `<kind>_etr<E>-<E>[_bb<B>-<B>]_<timestamp>.csv`, the `bb` chunk is only 
 | `kind` value | produced by |
 |---|---|
 | `addr_loop` | `tracecliff sweep-addr --kind loop` |
+| `addr_chain` | `tracecliff sweep-addr --kind chain` |
 
 | other file | description |
 |---|---|
