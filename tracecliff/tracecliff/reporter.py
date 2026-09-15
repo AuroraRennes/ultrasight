@@ -18,7 +18,7 @@ def fmt_pct(v):
 
 def provenance_summary(points):
     """Baseline provenance counted per workload, not per point."""
-    per_workload = {k.workload: p.loss["baseline_ref"] for k, p in points.items()}
+    per_workload = {k.workload: p.loss.baseline_ref for k, p in points.items()}
     counts = Counter(v for v in per_workload.values() if v is not None)
     return ", ".join(f"{v} ({n} workloads)" for v, n in sorted(counts.items()))
 
@@ -44,9 +44,9 @@ def print_grid(title, row_vals, col_vals, cells, row_label, col_label):
 def edge_rate_view(points):
     """Whether zero-loss and lossy points separate cleanly by edge rate."""
     rows = sorted(
-        (p.loss["offered_edge_rate"], p.loss["loss_pct"])
+        (p.loss.offered_edge_rate, p.loss.loss_pct)
         for p in points.values()
-        if p.loss["offered_edge_rate"] is not None and p.loss["loss_pct"] is not None
+        if p.loss.offered_edge_rate is not None and p.loss.loss_pct is not None
     )
     if not rows:
         return
@@ -80,9 +80,9 @@ def edge_rate_view(points):
 def sink_throughput(points):
     """Bytes/s moved on the saturated points: where a flat hardware limit shows."""
     vals = sorted(
-        p.loss["bytes_per_s"]
+        p.loss.bytes_per_s
         for p in points.values()
-        if p.loss["bytes_per_s"] and (p.loss["loss_pct"] or 0) >= 0.5
+        if p.loss.bytes_per_s and (p.loss.loss_pct or 0) >= 0.5
     )
     if not vals:
         return
@@ -96,7 +96,7 @@ def sink_throughput(points):
 
 def escape_window_report(points):
     """ARMOR's Delta-t: trace-blind time per overflow event, where measurable"""
-    losses = [p.loss for p in points.values() if p.loss["escape_window_s"]]
+    losses = [p.loss for p in points.values() if p.loss.escape_window_s]
     print("\n-- escape window (Delta-t) --")
     if not losses:
         ovf = sum(1 for p in points.values() if p.mean("overflow_count"))
@@ -106,8 +106,8 @@ def escape_window_report(points):
         )
         return
 
-    ws = sorted(loss["escape_window_s"] for loss in losses)
-    biased = sum(1 for loss in losses if loss["escape_window_ref"] != "lossless-arm")
+    ws = sorted(loss.escape_window_s for loss in losses)
+    biased = sum(1 for loss in losses if loss.escape_window_ref != "lossless-arm")
     mid = statistics.median_high(ws)
     print(
         f"  median {mid * 1e6:,.1f} us   range {ws[0] * 1e6:,.1f} .. "
@@ -151,7 +151,7 @@ def report(points, bench, fname):
         for r in rows:
             for c in cols:
                 p = by_cell.get(((r, c, max_iters), arms_key))
-                cells[r, c] = fmt_pct(p.loss["loss_pct"] if p else None)
+                cells[r, c] = fmt_pct(p.loss.loss_pct if p else None)
         label = " ".join(f"{name}={v}" for name, v in chosen.items()) or "all points"
         print_grid(
             f"-- {label}: loss% at iters={max_iters:,} --",
@@ -178,11 +178,11 @@ def arm_comparison(points, varying):
         print(f"\n-- {' vs '.join(f'{name}={v}' for v in values)} --")
         for v in values:
             losses = [
-                p.loss["loss_pct"]
+                p.loss.loss_pct
                 for key, p in points.items()
                 if key.iters == max_iters
                 and key.arm(name) == v
-                and p.loss["loss_pct"] is not None
+                and p.loss.loss_pct is not None
             ]
             if losses:
                 print(
@@ -194,7 +194,7 @@ def arm_comparison(points, varying):
 
 def inflated_report(points, bench):
     """Points reading as 0.0% loss that are decoder over-counts, not clean runs."""
-    bad = [(key, p) for key, p in points.items() if p.loss["inflated"]]
+    bad = [(key, p) for key, p in points.items() if p.loss.inflated]
     if not bad:
         return
     print(
@@ -204,7 +204,7 @@ def inflated_report(points, bench):
     for key, p in sorted(bad, key=lambda kp: kp[0]):
         print(
             f"  {describe(key, bench)}: "
-            f"true_count={true_count(p):,.0f}  baseline={p.loss['baseline_edges']:,.0f}  "
+            f"true_count={true_count(p):,.0f}  baseline={p.loss.baseline_edges:,.0f}  "
             f"overflow_count={p.mean('overflow_count')}"
         )
 
@@ -215,7 +215,7 @@ def tainted_report(points, bench):
     tainted = []
     for ps in by_workload(points).values():
         best, best_ovf = best_run(ps)
-        if best_ovf > 0 and best.loss["baseline_ref"] == REF_NO_ANALYTIC:
+        if best_ovf > 0 and best.loss.baseline_ref == REF_NO_ANALYTIC:
             tainted.append((best.key, true_count(best), best_ovf))
     if not tainted:
         return

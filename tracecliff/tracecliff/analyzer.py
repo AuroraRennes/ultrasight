@@ -10,6 +10,7 @@ import argparse
 import csv
 import sys
 from collections import defaultdict
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 from tracecliff.exception import SweepCsvError
@@ -75,8 +76,8 @@ def best_run(ps):
 REF_NO_ANALYTIC = "measured-max (no analytic count for this config)"
 
 
-def compute_baselines(points, bench):
-    """Per-workload lossless reference counts, tagging provenance on each point.
+def workload_baselines(points, bench):
+    """Per-workload lossless reference count and its provenance.
     Analytic where derivable; measured runs only corroborate it."""
     baselines = {}
     for wkey, ps in by_workload(points).items():
@@ -85,32 +86,26 @@ def compute_baselines(points, bench):
         observed = true_count(best)
 
         if expected is None:
-            baselines[wkey] = observed
-            ref = REF_NO_ANALYTIC
+            baselines[wkey] = observed, REF_NO_ANALYTIC
         elif observed > expected + slack(expected):
             # The formula understates the branches, or the decoder inflated
             # (framing desync) — either way it is not usable as a ceiling.
-            baselines[wkey] = observed
-            ref = "measured-max (ANALYTIC COUNT BELOW OBSERVED - formula suspect)"
+            baselines[wkey] = (
+                observed,
+                "measured-max (ANALYTIC COUNT BELOW OBSERVED - formula suspect)",
+            )
         elif observed >= expected - slack(expected):
-            baselines[wkey] = expected
             # A run that overflowed lost data by definition, so it corroborates
             # nothing — and must not silently become a ceiling.
-            ref = (
+            baselines[wkey] = (
+                expected,
                 "analytic (corroborated by a lossless run)"
                 if best_ovf == 0
-                else "analytic (nearest run OVERFLOWED - not corroborated)"
+                else "analytic (nearest run OVERFLOWED - not corroborated)",
             )
         else:
             # Every arm lost data. A real finding, not a fallback.
-            baselines[wkey] = expected
-            ref = "analytic (NO run reached it - all arms lossy)"
-
-        # Stored on every point of the workload: one home for provenance, which
-        # is what carries it into the analyzed CSV.
-        for p in ps:
-            p.loss = {"baseline_ref": ref}
-
+            baselines[wkey] = expected, "analytic (NO run reached it - all arms lossy)"
     return baselines
 
 
@@ -151,66 +146,99 @@ def reference_branch_times(points, baselines):
     return best
 
 
-# Every key annotate() derives into Point.loss, so a point that derives nothing
-# still carries the full set (the CSV writer reads them all).
-DERIVED_DEFAULTS = {
-    "loss_pct": None,
-    "baseline_edges": None,
-    "inflated": False,
-    "offered_edge_rate": None,
-    "delivered_edge_rate": None,
-    "bytes_per_s": None,
-    "offered_byte_rate": None,
-    "missing_branches": None,
-    "escape_window_s": None,
-    "escape_window_ref": None,
-}
+@dataclass(frozen=True)
+class Loss:
+    """What a point lost against its workload's baseline, and the rates around it.
+
+    Field order is the analyzed CSV's column order.
+    """
+
+    baseline_edges: float | None = None
+    # Provenance, on every measured point of the workload.
+    baseline_ref: str | None = None
+    loss_pct: float | None = None
+    # Over-count means the decoder desynced, not "extra data"; without this
+    # flag the clamp on loss_pct would read it as 0% loss.
+    inflated: bool = False
+    # offered = what the workload generated
+    offered_edge_rate: float | None = None
+    # delivered = what came back
+    delivered_edge_rate: float | None = None
+    # bytes/s = what the sink moved
+    bytes_per_s: float | None = None
+    # An estimate on lossy points: the baseline atom count priced at the
+    # packet cost of this workload's own clean runs.
+    offered_byte_rate: float | None = None
+    # Escape window (ARMOR's Delta-t): branches that never arrived, spread over
+    # the overflows, at the workload's unstalled branch rate.
+    missing_branches: float | None = None
+    escape_window_s: float | None = None
+    escape_window_ref: str | None = None
 
 
-def annotate(points, baselines, ref_branch_times, ref_bytes_per_atom):
+def point_loss(key, p, baseline, branch_time, bytes_per_atom):
+    """The Loss of one point, given its workload's (count, provenance) baseline."""
+    base, ref = baseline
+    count, secs = true_count(p), p.mean("child_time_s")
+    if count is None:
+        return Loss(baseline_edges=base)
+    if not base:
+        return Loss(baseline_edges=base, baseline_ref=ref)
+
+    offered = delivered = bytes_per_s = offered_bytes = None
+    if secs:
+        offered, delivered = base / secs, count / secs
+        if p.mean("raw_trace_bytes"):
+            bytes_per_s = p.mean("raw_trace_bytes") / secs
+        if bytes_per_atom:
+            offered_bytes = base * bytes_per_atom / secs
+
+    inflated = count > base + slack(base)
+    missing = max(0.0, base - count)
+    window_ref = None
+    if branch_time is not None:
+        window_ref = "lossless-arm"
+    elif secs:
+        branch_time = secs / base  # fall back to this run's own rate
+        window_ref = "self (stall-biased)"
+    n_ovf = p.mean("overflow_count")
+    # Meaningless where true_count is a framing artefact rather than a count.
+    window = None
+    if n_ovf and missing and branch_time and not inflated:
+        window = (missing / n_ovf) * branch_time
+
+    return Loss(
+        baseline_edges=base,
+        baseline_ref=ref,
+        loss_pct=max(0.0, (base - count) / base * 100.0),
+        inflated=inflated,
+        offered_edge_rate=offered,
+        delivered_edge_rate=delivered,
+        bytes_per_s=bytes_per_s,
+        offered_byte_rate=offered_bytes,
+        missing_branches=missing,
+        escape_window_s=window,
+        escape_window_ref=window_ref,
+    )
+
+
+def attach_losses(points, bench):
+    """Set every point's Loss, each built in one go."""
+    baselines = workload_baselines(points, bench)
+    counts = {wkey: base for wkey, (base, _) in baselines.items()}
+    branch_times = reference_branch_times(points, counts)
+    bytes_per_atom = reference_bytes_per_atom(points, counts)
     for key, p in points.items():
-        wkey = key.workload
-        base = baselines.get(wkey)
-        agg = p.loss = {"baseline_ref": None, **(p.loss or {}), **DERIVED_DEFAULTS}
-        agg["baseline_edges"] = base
-        count, secs = true_count(p), p.mean("child_time_s")
-        if not base or count is None:
-            continue
-
-        agg["loss_pct"] = max(0.0, (base - count) / base * 100.0)
-        if secs:
-            # offered = what the workload generated, delivered = what came back,
-            # bytes_per_s = what the sink moved (the quantity ETR limits).
-            agg["offered_edge_rate"] = base / secs
-            agg["delivered_edge_rate"] = count / secs
-            if p.mean("raw_trace_bytes"):
-                agg["bytes_per_s"] = p.mean("raw_trace_bytes") / secs
-            # An estimate on lossy points: the baseline atom count priced at
-            # the packet cost of this workload's own clean runs.
-            bpa = ref_bytes_per_atom.get((key.axes[:-1], key.arm("bb")))
-            if bpa:
-                agg["offered_byte_rate"] = base * bpa / secs
-
-        # Over-count means the decoder desynced, not "extra data"; without this
-        # flag the clamp above would read it as 0% loss.
-        agg["inflated"] = count > base + slack(base)
-
-        # Escape window (ARMOR's Delta-t): branches that never arrived, spread
-        # over the overflows, at the workload's unstalled branch rate.
-        agg["missing_branches"] = missing = max(0.0, base - count)
-        ref = ref_branch_times.get(wkey)
-        if ref is not None:
-            agg["escape_window_ref"] = "lossless-arm"
-        elif secs:
-            ref = secs / base  # fall back to this run's own rate
-            agg["escape_window_ref"] = "self (stall-biased)"
-        n_ovf = p.mean("overflow_count")
-        # Meaningless where true_count is a framing artefact rather than a count.
-        if n_ovf and missing and ref and not agg["inflated"]:
-            agg["escape_window_s"] = (missing / n_ovf) * ref
+        p.loss = point_loss(
+            key,
+            p,
+            baselines.get(key.workload, (None, None)),
+            branch_times.get(key.workload),
+            bytes_per_atom.get((key.axes[:-1], key.arm("bb"))),
+        )
 
 
-# Analyzed CSV columns after the key: each read off the point, then its loss.
+# Analyzed CSV columns after the key: each read off the point, then its Loss.
 CSV_POINT_FIELDS = {
     "n_runs": lambda p: p.n_runs,
     "n_ok": lambda p: p.n_ok(TRUE_METRIC),
@@ -219,19 +247,6 @@ CSV_POINT_FIELDS = {
     "overflow_count": lambda p: p.mean("overflow_count"),
     "child_time_s": lambda p: p.mean("child_time_s"),
 }
-CSV_LOSS_FIELDS = [
-    "baseline_edges",
-    "baseline_ref",
-    "loss_pct",
-    "inflated",
-    "offered_edge_rate",
-    "delivered_edge_rate",
-    "bytes_per_s",
-    "offered_byte_rate",
-    "missing_branches",
-    "escape_window_s",
-    "escape_window_ref",
-]
 
 
 def write_csv_out(points, bench, out_path):
@@ -243,7 +258,7 @@ def write_csv_out(points, bench, out_path):
             [a.field for a in bench.axes]
             + arm_fields
             + list(CSV_POINT_FIELDS)
-            + CSV_LOSS_FIELDS
+            + [f.name for f in fields(Loss)]
         )
         for key in keys:
             p = points[key]
@@ -251,7 +266,7 @@ def write_csv_out(points, bench, out_path):
                 list(key.axes)
                 + [v for _, v in key.arms]
                 + [get(p) for get in CSV_POINT_FIELDS.values()]
-                + [p.loss[f] for f in CSV_LOSS_FIELDS]
+                + [getattr(p.loss, f.name) for f in fields(Loss)]
             )
     print(f"  wrote {out_path}")
 
@@ -275,13 +290,7 @@ def analyze_file(path, csv_out):
         print(f"\n{path}: empty, skipping")
         return None
 
-    baselines = compute_baselines(points, bench)
-    annotate(
-        points,
-        baselines,
-        reference_branch_times(points, baselines),
-        reference_bytes_per_atom(points, baselines),
-    )
+    attach_losses(points, bench)
 
     # Imported here: reporter imports back from this module.
     from tracecliff import reporter

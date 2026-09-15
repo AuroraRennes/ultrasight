@@ -1,8 +1,8 @@
 """
 points.py — sweep CSVs read back as points, shared by every analysis.
 
-A CSV belongs to the Bench whose name its filename starts with (sweep.py writes
-results/<bench.name>_<factors>_<timestamp>.csv). Each row is one run; runs with
+A CSV belongs to the `Bench` whose name its filename starts with (sweep.py writes
+results/<bench.name>_<factors>_<timestamp>.csv). Each row is one run, runs with
 the same axis values and factor values are one point.
 """
 
@@ -10,10 +10,14 @@ import csv
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from tracecliff.benches import ALL_BENCHES
 from tracecliff.exception import SweepCsvError
 from tracecliff.sweep import CST_FIELDS, FACTOR_FLAGS, Bench
+
+if TYPE_CHECKING:
+    from tracecliff.analyzer import Loss
 
 # The cs-trace columns averaged over a point's runs.
 METRICS = [f for f in CST_FIELDS if f != "binary_name"]
@@ -52,7 +56,7 @@ class Point:
     n_runs: int = 0
     samples: dict[str, list[float]] = field(default_factory=lambda: defaultdict(list))
     # Filled in by the analyzer.
-    loss: dict | None = None
+    loss: "Loss | None" = None
 
     def add(self, row: dict) -> None:
         self.binary_name = row.get("binary_name") or self.binary_name
