@@ -30,14 +30,23 @@ LDFLAGS := -lrt
 
 SRC := src/bench_addr.c
 
-# N/S/ITERS sweep axes
-# ADDR_N_LIST: 1 target   = baseline (same address every call, best compression)
-#              3+ targets = past the ETM exact-match history depth (3 slots)
-# ADDR_STRIDE_LIST: byte alignment between stub targets, 0 up to one page
-# ITERS_LIST: iteration counts
-ADDR_N_LIST      := 1 2 3 4 8 16 32 64
-ADDR_STRIDE_LIST := 0 64 128 256 512 1024 2048 4096
-ITERS_LIST       := 100 1000 10000 100000 1000000 10000000 100000000
+# N/S/ITERS sweep axes, not defined here: axes.mk is generated from
+# tracecliff/benches.py, which is also what the sweeps iterate over, so the
+# binaries built here and the grid swept there cannot drift apart. Edit the
+# axes in benches.py; make regenerates axes.mk and restarts itself.
+#   ADDR_N_LIST: 1 target   = baseline (same address every call, best compression)
+#                3+ targets = past the ETM exact-match history depth (3 slots)
+#   ADDR_STRIDE_LIST: byte alignment between stub targets, 0 up to one page
+#   ITERS_LIST: iteration counts
+
+# axes.mk's rule is the first one in this file, it would otherwise become the
+# default goal and bare 'make' would build nothing else.
+.DEFAULT_GOAL := all
+
+axes.mk: tracecliff/benches.py
+	python3 -m tracecliff axes --make > $@
+
+include axes.mk
 
 DEFAULT_ITERS := 1000
 
@@ -107,3 +116,4 @@ dump: $(ADDR_LOOP_DIR)/bench_n$(N)_s$(S)_i$(I)
 clean:
 	rm -rf $(BIN_DIRS)
 	rm -f $(CHAIN_ASMS)
+	rm -f axes.mk

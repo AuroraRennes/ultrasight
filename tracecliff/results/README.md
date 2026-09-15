@@ -2,7 +2,7 @@
 
 CSVs written by `tracecliff sweep-addr`.
 
-Naming: `<kind>_etr<E>-<E>[_bb<B>-<B>]_<timestamp>.csv`, the `bb` chunk is only present for sweeps that also swept `--bb-list`.
+Naming: `<kind>_<factor tags>_<timestamp>.csv`, one tag per swept factor holding its values (e.g. `etr0-1_bb0-1`, `stalloff-3`), and a `+HHMM` UTC offset on the timestamp.
 
 | `kind` value | produced by |
 |---|---|

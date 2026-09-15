@@ -5,4 +5,7 @@ chains/*
 results/*
 !results/README.md
 
+axes.mk
+cstrace.bin
+
 __pycache__/

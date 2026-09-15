@@ -1,33 +1,25 @@
 """
-sweep.py — CoreSight ETM overflow characterization sweep
+sweep.py — sweep engine for benchmarks
 
-Invoked as a tracecliff subcommand (see tracecliff/cli.py):
-    sudo python3 -m tracecliff sweep-addr \\
-        --cs-trace /path/to/ultrasight/cs-trace \\
-        --cs-flags "-b ZCU-104 -c 0"
+A sweep is described by a `Bench` (see benches.py): an ordered list of `Axis`
+values plus a rule for turning one point into a binary name. The engine walks
+every point once per combination, runs cs-trace with -o pointed at a fresh temp
+CSV, and merges that row with the point and the factor values into one output CSV.
 
 Must be run as root (cs-trace needs /dev/mem access).
 
-Each cs-trace invocation is run with -o/--csv pointed at a fresh temp file.
-That row is merged with this sweep's own parameters (n_targets, spacing,
-iters, etr, run) into the combined output CSV.
-
-Flags:
-    --cs-trace    path to cs-trace binary (required)
-    --bench-dir   directory containing bench_n*_s*_i* binaries
-                  (default: bin/addr_loop or bin/addr_chain, from --kind)
-    --cs-flags    fixed flags passed to cs-trace for every run (e.g. "-b ZCU-104 -c 0")
-    --runs        repetitions per point (default: 3)
-    --kind        loop (bench_*) | chain (bench_chain_*) (default: loop)
-    --etr-list    --useetr values to sweep (default: 0 1)
-                  1 = ETR enabled as a trace sink (default)
-                  0 = ETR skipped, TPIU as the only trace sink (on PL)
-    --bb-list     --branchbroadcast values to sweep (default: 0 1)
-                  1 = ETM branch broadcasting on: every E branch gets a full address
-                      packet after it in the trace
-                  0 = branch broadcasting off: branches collapse to atom-only for
-                      predictable branches and need access to the binary disassembly
-                      to infer control-flow
+Factors:
+    etr     --useetr
+            1 = ETR enabled as a trace sink
+            0 = ETR skipped, TPIU as the only trace sink (on PL)
+    bb      --branchbroadcast
+            1 = ETM branch broadcasting on: every E branch gets a full address
+                packet after it in the trace
+            0 = branch broadcasting off: branches collapse to atom-only for
+                predictable branches and need access to the binary disassembly
+                to infer control-flow
+    stall   --stall
+            off, or the ISTALL FIFO level at which the ETM stalls the core
 """
 
 import argparse
@@ -37,85 +29,107 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import uuid
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
+from fnmatch import fnmatch
+from itertools import product
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-DEFAULT_BENCH_SUBDIR = {"loop": "bin/addr_loop", "chain": "bin/addr_chain"}
-BIN_PREFIX = {"loop": "bench", "chain": "bench_chain"}
+# tracecliff lives inside ultrasight, whose own cs-trace build sits one level up
+DEFAULT_CS_TRACE = REPO_ROOT.parent / "cs-trace"
 
-# Sweep axes — must match Makefile's ADDR_N_LIST / ADDR_STRIDE_LIST / ITERS_LIST
-N_LIST = [1, 2, 3, 4, 8, 16, 32, 64]
-S_LIST = [0, 64, 128, 256, 512, 1024, 2048, 4096]
-ITERS_LIST = [100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000]
-
-SWEEP_FIELDS = ["n_targets", "spacing", "iters", "etr", "bb", "run"]
-
-# cs-trace's own CSV row schema
-CST_FIELDS = [
+# The subset of cs-trace's stats CSV we keep
+CST_KEEP = [
     "binary",
     "child_time_s",
-    "instr_time_s",
-    "global_time_s",
-    "edges_total",
-    "edges_fifo_overflow",
-    "edges_freeze_drop",
-    "total_cycles",
-    "idle_cycles",
-    "pkt_cnt",
-    "pkt_bst_cnt",
-    "pkt_min_bst",
-    "pkt_max_bst",
-    "pkt_sum_bst",
-    "pkt_gap_cnt",
-    "pkt_min_gap",
-    "pkt_max_gap",
-    "pkt_sum_gap",
-    "pkt_gap_h_0",
-    "pkt_gap_h_1_4",
-    "pkt_gap_h_5_15",
-    "pkt_gap_h_16_255",
-    "pkt_gap_h_256p",
-    "pkt_bst_h_1",
-    "pkt_bst_h_2_3",
-    "pkt_bst_h_4_15",
-    "pkt_bst_h_16p",
-    "atom_pkt_cnt",
-    "atom_pkt_bst_cnt",
-    "atom_pkt_min_bst",
-    "atom_pkt_max_bst",
-    "atom_pkt_sum_bst",
-    "atom_pkt_gap_cnt",
-    "atom_pkt_min_gap",
-    "atom_pkt_max_gap",
-    "atom_pkt_sum_gap",
-    "atom_pkt_gap_h_0",
-    "atom_pkt_gap_h_1_4",
-    "atom_pkt_gap_h_5_15",
-    "atom_pkt_gap_h_16_255",
-    "atom_pkt_gap_h_256p",
-    "atom_pkt_bst_h_1",
-    "atom_pkt_bst_h_2_3",
-    "atom_pkt_bst_h_4_15",
-    "atom_pkt_bst_h_16p",
     "atom_elem_sum",
-    "atom_elem_h_1",
-    "atom_elem_h_2",
-    "atom_elem_h_3",
-    "atom_elem_h_4",
-    "atom_elem_h_5",
-    "atom_elem_h_6_11",
-    "atom_elem_h_12_24",
-    "frame_errors",
-    "bs_gen_errors",
-    "demux_errors",
     "overflow_count",
     "raw_trace_bytes",
 ]
 
-CSV_FIELDS = SWEEP_FIELDS + CST_FIELDS
+# Only get the binary name rather than full path
+CST_FIELDS = ["binary_name"] + CST_KEEP[1:]
+
+
+def projected(row: dict) -> dict:
+    """cs-trace's row narrowed to CST_KEEP, ready for our writer."""
+    out = {k: row.get(k, "ERR") for k in CST_KEEP}
+    out["binary_name"] = str(out.pop("binary")).rsplit("/", 1)[-1]
+    return {k: out[k] for k in CST_FIELDS}
+
+
+# The cs-trace configuration knobs a sweep can vary. Each one is a CSV column
+# (its field name) and a cs-trace flag carrying the value verbatim.
+#
+# Note: these are requested values, recorded as the sweep asked for them.
+FACTOR_FLAGS = {
+    "etr": "--useetr",
+    "bb": "--branchbroadcast",
+    "stall": "--stall",
+}
+
+# What a sweep varies if it says nothing
+DEFAULT_FACTORS = {"etr": ["0", "1"], "bb": ["0", "1"]}
+
+# Trailing column after the factor columns, appended to each bench's own axes.
+RUN_FIELD = "run"
+
+
+# ---------------------------------------------------------------------------
+# Bench description
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Axis:
+    field: str
+
+    # Short print label
+    label: str
+    values: list[int]
+    width: int = 4
+
+    # Makefile variable this axis is emitted as by tracecliff axes --make (see benches.py)
+    make_var: str = ""
+
+
+@dataclass(frozen=True)
+class Bench:
+    """A benchmark family: what to sweep, and which binary each point names.
+
+    name        prefix of the output CSV (e.g. "addr_loop")
+    axes        swept parameters, outermost first; the innermost is ITERS
+    binary_name maps one point (one value per axis) to a binary filename
+    group_depth how many leading axes form a printed block, a blank line is
+                emitted whenever that prefix changes
+    detail      optional extra banner line, e.g. addr's --kind
+    """
+
+    name: str
+    axes: tuple[Axis, ...]
+    binary_name: Callable[[tuple[int, ...]], str]
+    group_depth: int = 1
+    detail: str = ""
+
+    def sweep_fields(self, factor_fields: list[str]) -> list[str]:
+        return [a.field for a in self.axes] + factor_fields + [RUN_FIELD]
+
+    def csv_fields(self, factor_fields: list[str]) -> list[str]:
+        return self.sweep_fields(factor_fields) + CST_FIELDS
+
+    def points(self) -> Iterator[tuple[int, ...]]:
+        return product(*(a.values for a in self.axes))
+
+    def describe(self, point: tuple[int, ...], pad: bool = False) -> str:
+        """ "n=64  s=4096 iters=1000      " (padded) or "n=64 s=4096 iters=1000"."""
+        return " ".join(
+            f"{a.label}={v:<{a.width}}" if pad else f"{a.label}={v}"
+            for a, v in zip(self.axes, point)
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -125,17 +139,53 @@ CSV_FIELDS = SWEEP_FIELDS + CST_FIELDS
 
 @dataclass
 class Config:
-    cs_trace: str
+    bench: Bench
+    cs_trace: Path
     bench_dir: Path
     cs_flags: list[str]
     runs: int
-    kind: str
-    etr_list: list[int]
-    bb_list: list[int]
+
+    # Swept cs-trace knobs: field name -> the values to walk, in order. Keys
+    # must be in FACTOR_FLAGS. The cross product of these is walked once per
+    # bench point.
+    factors: dict[str, list[str]]
+
+    # Glob patterns matched against each point's binary name. Empty = the whole
+    # bench grid.
+    stimuli: tuple[str, ...] = ()
+
+    def points(self) -> list[tuple]:
+        """The bench points this sweep visits, after --stimulus filtering."""
+        pts = list(self.bench.points())
+        if not self.stimuli:
+            return pts
+        kept = [
+            p
+            for p in pts
+            if any(fnmatch(self.bench.binary_name(p), pat) for pat in self.stimuli)
+        ]
+        if not kept:
+            die(
+                "no bench point matches --stimulus "
+                f"{list(self.stimuli)}\n       grid holds: "
+                + ", ".join(self.bench.binary_name(p) for p in pts[:6])
+                + (", ..." if len(pts) > 6 else "")
+            )
+        return kept
 
     @property
-    def bin_prefix(self) -> str:
-        return BIN_PREFIX[self.kind]
+    def factor_fields(self) -> list[str]:
+        return list(self.factors)
+
+    @property
+    def csv_fields(self) -> list[str]:
+        return self.bench.csv_fields(self.factor_fields)
+
+    def combos(self) -> Iterator[dict[str, str]]:
+        """Every factor combination, in declaration order."""
+        fields = self.factor_fields
+        for values in product(*(self.factors[f] for f in fields)):
+            yield dict(zip(fields, values))
 
 
 # ---------------------------------------------------------------------------
@@ -148,19 +198,24 @@ def die(msg: str) -> None:
     sys.exit(1)
 
 
-def cs_flags_for(cfg: Config, etr: int, bb: int) -> list[str]:
-    return cfg.cs_flags + ["--useetr", str(etr), "--branchbroadcast", str(bb)]
+def cs_flags_for(cfg: Config, combo: dict[str, str]) -> list[str]:
+    flags = list(cfg.cs_flags)
+    for field, value in combo.items():
+        flags += [FACTOR_FLAGS[field], str(value)]
+    return flags
 
 
-def binary_path(cfg: Config, n: int, s: int, iters: int) -> Path:
-    return cfg.bench_dir / f"{cfg.bin_prefix}_n{n}_s{s}_i{iters}"
+def describe_combo(combo: dict[str, str]) -> str:
+    """ "etr=0 bb=1 stall=off", the sweep's own label for a factor cell."""
+    return " ".join(f"{k}={v}" for k, v in combo.items()) or "(defaults)"
 
 
 def run_once(cfg: Config, binary: Path, flags: list[str]) -> dict:
     """Run cs-trace once with -o pointed at a fresh temp CSV, return the
     single resulting row as a dict (all "ERR" on failure/timeout)."""
-    tmp_path = Path(tempfile.mktemp(suffix=".csv", prefix="cstrace_"))
-    cmd = [cfg.cs_trace] + flags + ["-o", str(tmp_path), "--", str(binary)]
+    # cs-trace creates the file itself, so we only need an unused name.
+    tmp_path = Path(tempfile.gettempdir()) / f"cstrace_{uuid.uuid4().hex}.csv"
+    cmd = [str(cfg.cs_trace)] + flags + ["-o", str(tmp_path), "--", str(binary)]
     try:
         result = subprocess.run(
             cmd, check=False, capture_output=True, text=True, timeout=300
@@ -179,41 +234,30 @@ def run_once(cfg: Config, binary: Path, flags: list[str]) -> dict:
         finally:
             tmp_path.unlink(missing_ok=True)
 
-    return row if row is not None else {k: "ERR" for k in CST_FIELDS}
+    return row if row is not None else {k: "ERR" for k in CST_KEEP}
 
 
 def run_point(
     cfg: Config,
     writer: csv.DictWriter,
-    n: int,
-    s: int,
-    iters: int,
-    etr: int,
-    bb: int,
+    point: tuple[int, ...],
+    combo: dict[str, str],
 ) -> None:
-    binary = binary_path(cfg, n, s, iters)
+    bench = cfg.bench
+    binary = cfg.bench_dir / bench.binary_name(point)
     if not binary.is_file():
-        print(f"SKIP  n={n} s={s} iters={iters} etr={etr} bb={bb}  (not found)")
+        print(f"SKIP  {bench.describe(point)} {describe_combo(combo)}  (not found)")
         return
 
-    flags = cs_flags_for(cfg, etr, bb)
+    flags = cs_flags_for(cfg, combo)
+    axis_cols = {a.field: v for a, v in zip(bench.axes, point)}
     overflows, times = [], []
 
     for run in range(1, cfg.runs + 1):
         row = run_once(cfg, binary, flags)
         overflows.append(row.get("overflow_count", "ERR"))
         times.append(row.get("child_time_s", "ERR"))
-        writer.writerow(
-            {
-                "n_targets": n,
-                "spacing": s,
-                "iters": iters,
-                "etr": etr,
-                "bb": bb,
-                "run": run,
-                **row,
-            }
-        )
+        writer.writerow({**axis_cols, **combo, RUN_FIELD: run, **projected(row)})
 
     numeric_times = [float(t) for t in times if t != "ERR"]
     avg_time = (
@@ -222,7 +266,7 @@ def run_point(
     ov_str = "  ".join(str(o).rjust(6) for o in overflows)
 
     print(
-        f"  etr={etr} bb={bb}  n={n:<4} s={s:<4} iters={iters:<10}  "
+        f"  {describe_combo(combo)}  {bench.describe(point, pad=True)}  "
         f"overflows=[{ov_str}]  avg_time={avg_time}s"
     )
 
@@ -233,14 +277,20 @@ def run_point(
 
 
 def do_sweep(cfg: Config, writer: csv.DictWriter) -> None:
-    for etr in cfg.etr_list:
-        for bb in cfg.bb_list:
-            print(f"\n## etr={etr} bb={bb}")
-            for n in N_LIST:
-                for s in S_LIST:
-                    for iters in ITERS_LIST:
-                        run_point(cfg, writer, n, s, iters, etr, bb)
+    """The selected bench points, once per factor combination."""
+    bench = cfg.bench
+    depth = bench.group_depth
+    points = cfg.points()
+
+    for combo in cfg.combos():
+        print(f"\n## {describe_combo(combo)}")
+        group = None
+        for point in points:
+            if group is not None and point[:depth] != group:
                 print()
+            group = point[:depth]
+            run_point(cfg, writer, point, combo)
+        print()
 
 
 # ---------------------------------------------------------------------------
@@ -249,47 +299,71 @@ def do_sweep(cfg: Config, writer: csv.DictWriter) -> None:
 
 
 def run(cfg: Config) -> None:
+    bench = cfg.bench
     if not Path(cfg.cs_trace).is_file():
-        die(f"cs-trace binary not found: {cfg.cs_trace}")
+        die(
+            f"cs-trace binary not found: {cfg.cs_trace}\n"
+            "       build it in the ultrasight superproject (make -C ..), "
+            "or pass --cs-trace for an out-of-tree build"
+        )
     if os.geteuid() != 0:
         die(
-            "must be run as root (cs-trace needs /dev/mem) — try: sudo python3 -m tracecliff sweep-addr ..."
+            "must be run as root (cs-trace needs /dev/mem) — try: sudo python3 -m tracecliff ..."
         )
 
     results_dir = REPO_ROOT / "results"
     results_dir.mkdir(exist_ok=True)
 
     timestamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S%z")
-    etr_tag = "-".join(str(e) for e in sorted(set(cfg.etr_list)))
-    bb_tag = "-".join(str(b) for b in sorted(set(cfg.bb_list)))
-    csv_path = results_dir / f"addr_{cfg.kind}_etr{etr_tag}_bb{bb_tag}_{timestamp}.csv"
+    # One tag per swept factor, so the filename still says what varied
+    factor_tag = (
+        "_".join(
+            f"{field}{'-'.join(str(v) for v in values)}"
+            for field, values in cfg.factors.items()
+        )
+        or "defaults"
+    )
+    csv_path = results_dir / f"{bench.name}_{factor_tag}_{timestamp}.csv"
 
     print(f"cs-trace : {cfg.cs_trace}")
     print(f"bench_dir: {cfg.bench_dir}")
     print(f"cs_flags : {cfg.cs_flags or '(none)'}")
     print(f"runs/pt  : {cfg.runs}")
-    print(f"kind     : {cfg.kind} ({cfg.bin_prefix})")
-    print(f"etr_list : {cfg.etr_list}")
-    print(f"bb_list  : {cfg.bb_list}")
+    selected = cfg.points()
+    print(
+        f"stimuli  : {len(selected)} point(s)"
+        + (f" matching {list(cfg.stimuli)}" if cfg.stimuli else " (whole grid)")
+    )
+    if bench.detail:
+        print(f"kind     : {bench.detail}")
+    for field, values in cfg.factors.items():
+        print(f"{field:<9}: {values}  ({FACTOR_FLAGS[field]})")
     print(f"csv      : {csv_path}")
 
-    with csv_path.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+    # buffering=1 (line-buffered): each row hits the file as it is written, so
+    # an interrupted sweep still leaves everything it got through on disk.
+    with csv_path.open("w", newline="", buffering=1) as f:
+        writer = csv.DictWriter(f, fieldnames=cfg.csv_fields)
         writer.writeheader()
         do_sweep(cfg, writer)
 
     print(f"\nDone. Results: {csv_path}")
 
 
-def add_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--cs-trace", required=True, help="path to cs-trace binary")
+# ---------------------------------------------------------------------------
+# Argument surface shared by every sweep
+# ---------------------------------------------------------------------------
+
+
+def add_common_arguments(parser: argparse.ArgumentParser, bench_dir_help: str) -> None:
     parser.add_argument(
-        "--bench-dir",
+        "--cs-trace",
+        default=DEFAULT_CS_TRACE,
         type=Path,
-        default=None,
-        help="directory containing bench_n*_s*_i* binaries "
-        "(default: bin/addr_loop or bin/addr_chain, from --kind)",
+        help=f"path to cs-trace binary (default: {DEFAULT_CS_TRACE}, "
+        "the ultrasight superproject's own build)",
     )
+    parser.add_argument("--bench-dir", type=Path, default=None, help=bench_dir_help)
     parser.add_argument(
         "--cs-flags",
         default="",
@@ -299,44 +373,77 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         "--runs", type=int, default=3, help="repetitions per point (default: 3)"
     )
     parser.add_argument(
-        "--kind",
-        choices=["loop", "chain"],
-        default="loop",
-        help="loop (bench_*) | chain (bench_chain_*) (default: loop)",
+        "--stimulus",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help="only run bench points whose binary name matches GLOB, "
+        "e.g. --stimulus 'bench_n2_s0_i*'. Repeatable (a point "
+        "matching any pattern is kept). Default: the whole grid",
     )
+    add_factor_arguments(parser)
+
+
+def add_factor_arguments(parser: argparse.ArgumentParser) -> None:
+    """--etr-list/--bb-list plus the general --factor NAME=V1,V2 form."""
     parser.add_argument(
         "--etr-list",
         nargs="+",
-        type=int,
-        default=[0, 1],
+        default=None,
         help="--useetr values to sweep (default: 0 1)",
     )
     parser.add_argument(
         "--bb-list",
         nargs="+",
-        type=int,
-        default=[0, 1],
+        default=None,
         help="--branchbroadcast values to sweep (default: 0 1)",
     )
+    parser.add_argument(
+        "--factor",
+        action="append",
+        default=[],
+        metavar="NAME=V1,V2",
+        help="sweep cs-trace knob NAME over the listed values, e.g. "
+        "--factor stall=off,3. "
+        f"NAME is one of: {', '.join(FACTOR_FLAGS)}. Repeatable; "
+        "the cross product of every --factor is walked. Giving any "
+        "--factor replaces the default etr/bb sweep unless they are "
+        "also named (by --factor or --etr-list/--bb-list)",
+    )
 
 
-def config_from_args(args: argparse.Namespace) -> Config:
-    bench_dir = args.bench_dir or (REPO_ROOT / DEFAULT_BENCH_SUBDIR[args.kind])
+def factors_from_args(args: argparse.Namespace) -> dict[str, list[str]]:
+    """The swept factors, in the order they were named on the command line."""
+    factors: dict[str, list[str]] = {}
+    for spec in args.factor:
+        field, sep, values = spec.partition("=")
+        if not sep:
+            die(f"--factor needs NAME=V1,V2 (got {spec!r})")
+        if field not in FACTOR_FLAGS:
+            die(
+                f"unknown factor {field!r} (expected one of: {', '.join(FACTOR_FLAGS)})"
+            )
+        factors[field] = [v for v in values.split(",") if v]
+        if not factors[field]:
+            die(f"--factor {field} has no values")
+
+    # The named options win over --factor for the same field.
+    for field, value in (("etr", args.etr_list), ("bb", args.bb_list)):
+        if value is not None:
+            factors[field] = [str(v) for v in value]
+
+    return factors or {k: list(v) for k, v in DEFAULT_FACTORS.items()}
+
+
+def config_from_args(
+    args: argparse.Namespace, bench: Bench, default_subdir: str
+) -> Config:
     return Config(
+        bench=bench,
         cs_trace=args.cs_trace,
-        bench_dir=Path(bench_dir),
+        bench_dir=Path(args.bench_dir or (REPO_ROOT / default_subdir)),
         cs_flags=shlex.split(args.cs_flags),
         runs=args.runs,
-        kind=args.kind,
-        etr_list=args.etr_list,
-        bb_list=args.bb_list,
+        factors=factors_from_args(args),
+        stimuli=tuple(args.stimulus),
     )
-
-
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    add_arguments(parser)
-    args = parser.parse_args(argv)
-    run(config_from_args(args))
