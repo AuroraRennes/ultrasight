@@ -1,0 +1,4 @@
+bin/*
+!bin/README.md
+
+__pycache__/
