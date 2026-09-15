@@ -4,22 +4,12 @@ reporter.py — print one analyzed sweep as a text report
 
 import statistics
 from collections import Counter
+from itertools import product
 
-from tracecliff.analyzer import (
-    AXIS_FIELDS,
-    AXIS_LABELS,
-    REF_NO_ANALYTIC,
-    axis_values,
-    best_run,
-    by_workload,
-    workload_key,
-)
+from tracecliff.analyzer import REF_NO_ANALYTIC, best_run, by_workload, true_count
+from tracecliff.points import arm_values, axis_values
 
 MAX_TAINTED_SHOWN = 10
-
-
-# Per-kind banner heading each file's report.
-KIND_BANNER = {"addr": "kind=addr / bench_addr: N_TARGETS x STUB_STRIDE"}
 
 
 def fmt_pct(v):
@@ -28,9 +18,15 @@ def fmt_pct(v):
 
 def provenance_summary(points):
     """Baseline provenance counted per workload, not per point."""
-    per_workload = {workload_key(k): a["baseline_ref"] for k, a in points.items()}
+    per_workload = {k.workload: p.loss["baseline_ref"] for k, p in points.items()}
     counts = Counter(v for v in per_workload.values() if v is not None)
     return ", ".join(f"{v} ({n} workloads)" for v, n in sorted(counts.items()))
+
+
+def describe(key, bench):
+    """ "n_targets=8 spacing=64 iters=1,000,000 etr=0" for one point."""
+    axes = [f"{a.field}={v:,}" for a, v in zip(bench.axes, key.axes)]
+    return " ".join(axes + [f"{name}={v}" for name, v in key.arms])
 
 
 def print_grid(title, row_vals, col_vals, cells, row_label, col_label):
@@ -48,13 +44,13 @@ def print_grid(title, row_vals, col_vals, cells, row_label, col_label):
 def edge_rate_view(points):
     """Whether zero-loss and lossy points separate cleanly by edge rate."""
     rows = sorted(
-        (agg["offered_edge_rate"], agg["loss_pct"])
-        for agg in points.values()
-        if agg["offered_edge_rate"] is not None and agg["loss_pct"] is not None
+        (p.loss["offered_edge_rate"], p.loss["loss_pct"])
+        for p in points.values()
+        if p.loss["offered_edge_rate"] is not None and p.loss["loss_pct"] is not None
     )
     if not rows:
         return
-    print("\n-- edge-rate view (all N/stride/iters/etr/bb points) --")
+    print("\n-- edge-rate view (all points) --")
     zero = [r for r in rows if r[1] < 0.5]
     lossy = [r for r in rows if r[1] >= 0.5]
     if zero:
@@ -81,15 +77,12 @@ def edge_rate_view(points):
             )
 
 
-KIND_TAIL = {"addr": edge_rate_view}
-
-
 def sink_throughput(points):
     """Bytes/s moved on the saturated points: where a flat hardware limit shows."""
     vals = sorted(
-        agg["bytes_per_s"]
-        for agg in points.values()
-        if agg.get("bytes_per_s") and (agg.get("loss_pct") or 0) >= 0.5
+        p.loss["bytes_per_s"]
+        for p in points.values()
+        if p.loss["bytes_per_s"] and (p.loss["loss_pct"] or 0) >= 0.5
     )
     if not vals:
         return
@@ -103,18 +96,18 @@ def sink_throughput(points):
 
 def escape_window_report(points):
     """ARMOR's Delta-t: trace-blind time per overflow event, where measurable"""
-    vals = [(key, agg) for key, agg in points.items() if agg.get("escape_window_s")]
+    losses = [p.loss for p in points.values() if p.loss["escape_window_s"]]
     print("\n-- escape window (Delta-t) --")
-    if not vals:
-        ovf = sum(1 for a in points.values() if a.get("overflow_count"))
+    if not losses:
+        ovf = sum(1 for p in points.values() if p.mean("overflow_count"))
         print(
             f"  not measurable: {ovf} point(s) recorded an overflow, "
             f"0 with a usable branch deficit"
         )
         return
 
-    ws = sorted(a["escape_window_s"] for _, a in vals)
-    biased = sum(1 for _, a in vals if a["escape_window_ref"] != "lossless-arm")
+    ws = sorted(loss["escape_window_s"] for loss in losses)
+    biased = sum(1 for loss in losses if loss["escape_window_ref"] != "lossless-arm")
     mid = statistics.median_high(ws)
     print(
         f"  median {mid * 1e6:,.1f} us   range {ws[0] * 1e6:,.1f} .. "
@@ -129,65 +122,67 @@ def escape_window_report(points):
         )
 
 
-def report(points, kind, fname):
+def report(points, bench, fname):
     """Everything printed for one file: axes, provenance, loss% grids, warnings."""
-    rows, cols, iterss, etrs, bbs = axis_values(points)
-    max_iters = max(iterss)
-    row_name, col_name = AXIS_FIELDS[kind]
-    row_label, col_label = AXIS_LABELS[kind]
+    axes = axis_values(points, bench)
+    arms = arm_values(points)
+    varying = {name: values for name, values in arms.items() if len(values) > 1}
+    fixed = [f"{name}={values[0]}" for name, values in arms.items() if len(values) == 1]
+    row_axis, col_axis, iters_axis = bench.axes
+    rows, cols = axes[row_axis.field], axes[col_axis.field]
+    max_iters = max(axes[iters_axis.field])
 
-    print(f"\n{'=' * 78}\n{fname}  ({KIND_BANNER[kind]})")
-    for name, values in (
-        (row_name, rows),
-        (col_name, cols),
-        ("iters", iterss),
-        ("etr", etrs),
-        ("bb", bbs),
-    ):
+    print(f"\n{'=' * 78}\n{fname}  ({bench.name}: {row_axis.field} x {col_axis.field})")
+    for name, values in axes.items():
         print(f"{name} values: {values}")
+    for name, values in varying.items():
+        print(f"{name} values: {values}")
+    if fixed:
+        print(f"fixed: {' '.join(fixed)}")
     print(f"baseline provenance: {provenance_summary(points)}")
 
-    for etr in etrs:
-        for bb in bbs:
-            cells = {}
-            for r in rows:
-                for c in cols:
-                    agg = points.get((r, c, max_iters, etr, bb))
-                    cells[r, c] = fmt_pct(agg["loss_pct"] if agg else None)
-            print_grid(
-                f"-- etr={etr} bb={bb}: loss% at iters={max_iters:,} --",
-                rows,
-                cols,
-                cells,
-                row_label,
-                col_label,
-            )
+    by_cell = {(k.axes, k.arms): p for k, p in points.items()}
+    for combo in product(*varying.values()):
+        chosen = dict(zip(varying, combo))
+        arms_key = tuple(
+            (name, chosen.get(name, values[0])) for name, values in arms.items()
+        )
+        cells = {}
+        for r in rows:
+            for c in cols:
+                p = by_cell.get(((r, c, max_iters), arms_key))
+                cells[r, c] = fmt_pct(p.loss["loss_pct"] if p else None)
+        label = " ".join(f"{name}={v}" for name, v in chosen.items()) or "all points"
+        print_grid(
+            f"-- {label}: loss% at iters={max_iters:,} --",
+            rows,
+            cols,
+            cells,
+            row_axis.field,
+            col_axis.field,
+        )
 
-    KIND_TAIL[kind](points)
+    edge_rate_view(points)
     sink_throughput(points)
     escape_window_report(points)
-    etr_bb_comparison(points)
-    tainted_report(points)
-    inflated_report(points, kind)
+    arm_comparison(points, varying)
+    tainted_report(points, bench)
+    inflated_report(points, bench)
 
 
-def etr_bb_comparison(points):
-    """Mean/min/max loss% at the largest common iters, split by etr then by bb."""
-    max_iters = max(k[2] for k in points)
+def arm_comparison(points, varying):
+    """Mean/min/max loss% at the largest iters, per value of each varying factor."""
+    max_iters = max(k.iters for k in points)
 
-    for name, idx, header in (
-        ("etr", 3, "\n-- ETR=0 vs ETR=1 --"),
-        ("bb", 4, "\n-- branch-broadcast on (bb=1) vs off (bb=0) --"),
-    ):
-        values = sorted({k[idx] for k in points})
-        if len(values) < 2:
-            continue
-        print(header)
+    for name, values in varying.items():
+        print(f"\n-- {' vs '.join(f'{name}={v}' for v in values)} --")
         for v in values:
             losses = [
-                agg["loss_pct"]
-                for key, agg in points.items()
-                if key[2] == max_iters and key[idx] == v and agg["loss_pct"] is not None
+                p.loss["loss_pct"]
+                for key, p in points.items()
+                if key.iters == max_iters
+                and key.arm(name) == v
+                and p.loss["loss_pct"] is not None
             ]
             if losses:
                 print(
@@ -197,33 +192,31 @@ def etr_bb_comparison(points):
                 )
 
 
-def inflated_report(points, kind):
+def inflated_report(points, bench):
     """Points reading as 0.0% loss that are decoder over-counts, not clean runs."""
-    axis_names = AXIS_FIELDS[kind]
-    bad = [(key, agg) for key, agg in points.items() if agg.get("inflated")]
+    bad = [(key, p) for key, p in points.items() if p.loss["inflated"]]
     if not bad:
         return
     print(
         f"\n-- WARNING: {len(bad)} point(s) with true_count > baseline "
         f"(reported as 0.0% loss above, but not actually clean) --"
     )
-    for key, agg in sorted(bad):
-        a, b, iters, etr, bb = key
+    for key, p in sorted(bad, key=lambda kp: kp[0]):
         print(
-            f"  {axis_names[0]}={a} {axis_names[1]}={b} iters={iters:,} etr={etr} bb={bb}: "
-            f"true_count={agg['true_count']:,.0f}  baseline={agg['baseline_edges']:,.0f}  "
-            f"overflow_count={agg.get('overflow_count')}"
+            f"  {describe(key, bench)}: "
+            f"true_count={true_count(p):,.0f}  baseline={p.loss['baseline_edges']:,.0f}  "
+            f"overflow_count={p.mean('overflow_count')}"
         )
 
 
-def tainted_report(points):
+def tainted_report(points, bench):
     """Warn where a formula-less baseline came from a run that overflowed,
     since loss% against it then understates the loss."""
     tainted = []
-    for wkey, aggs in by_workload(points).items():
-        best, best_ovf = best_run(aggs)
-        if best_ovf > 0 and best["baseline_ref"] == REF_NO_ANALYTIC:
-            tainted.append((wkey, best["true_count"], best_ovf))
+    for ps in by_workload(points).values():
+        best, best_ovf = best_run(ps)
+        if best_ovf > 0 and best.loss["baseline_ref"] == REF_NO_ANALYTIC:
+            tainted.append((best.key, true_count(best), best_ovf))
     if not tainted:
         return
 
@@ -235,7 +228,10 @@ def tainted_report(points):
         "     That baseline is below the true count, so every loss% against "
         "it understates the loss."
     )
-    for wkey, observed, ovf in sorted(tainted, key=lambda t: -t[2])[:MAX_TAINTED_SHOWN]:
-        print(f"       {wkey}  baseline={observed:,.0f}  overflow_count={ovf:,.0f}")
+    for key, observed, ovf in sorted(tainted, key=lambda t: -t[2])[:MAX_TAINTED_SHOWN]:
+        print(
+            f"       {describe(key, bench)}  baseline={observed:,.0f}  "
+            f"overflow_count={ovf:,.0f}"
+        )
     if len(tainted) > MAX_TAINTED_SHOWN:
         print(f"       ... and {len(tainted) - MAX_TAINTED_SHOWN} more")

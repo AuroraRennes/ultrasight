@@ -11,6 +11,7 @@ Adding a benchmark family means adding a Bench here and a subparser in cli.py.
 Adding a new value to an axis here builds the new binaries and sweeps them.
 """
 
+from tracecliff.exception import AxisConflictError
 from tracecliff.sweep import Axis, Bench
 
 # ---------------------------------------------------------------------------
@@ -31,6 +32,35 @@ ITERS_LIST = [100_000, 1_000_000, 10_000_000, 100_000_000]
 ADDR_BENCH_SUBDIR = {"loop": "bin/addr_loop", "chain": "bin/addr_chain"}
 ADDR_BIN_PREFIX = {"loop": "bench", "chain": "bench_chain"}
 
+# bench_addr.c: every executed branch costs exactly 2 atom elements, so the
+# analytic count is 2 x branches.
+ATOMS_PER_BRANCH = 2
+ADDR_LOOP_UNROLL = 8  # iterations per unrolled block
+ADDR_LOOP_INDIRECT_PER_ITER = 2  # the indirect call and its return
+# A lap of N hops is the BL to t0, N-1 BRs and the final RET (N+1 branches),
+# plus the loop branch in bench() that starts the next lap.
+ADDR_CHAIN_LAP_OVERHEAD_BRANCHES = 2
+
+
+def addr_loop_atoms(point: tuple[int, ...]) -> int:
+    _n_targets, _spacing, iters = point
+    # One loop-back branch per block of ADDR_LOOP_UNROLL calls, then one per
+    # call in the tail loop that runs the remainder.
+    blocks, tail = divmod(iters, ADDR_LOOP_UNROLL)
+    branches = iters * ADDR_LOOP_INDIRECT_PER_ITER + blocks + tail
+    return branches * ATOMS_PER_BRANCH
+
+
+def addr_chain_atoms(point: tuple[int, ...]) -> int:
+    n_targets, _spacing, iters = point
+    # The chain only runs whole laps of N hops: iters rounds up to one.
+    laps = -(-iters // n_targets)  # ceil
+    branches = laps * (n_targets + ADDR_CHAIN_LAP_OVERHEAD_BRANCHES)
+    return branches * ATOMS_PER_BRANCH
+
+
+ADDR_ATOMS = {"loop": addr_loop_atoms, "chain": addr_chain_atoms}
+
 
 def addr_bench(kind: str) -> Bench:
     """The addr Bench for --kind loop / chain."""
@@ -46,6 +76,7 @@ def addr_bench(kind: str) -> Bench:
         # one printed block per N_TARGETS, i.e. the whole STUB_STRIDE x ITERS grid
         group_depth=1,
         detail=f"{kind} ({prefix})",
+        expected_atoms=ADDR_ATOMS[kind],
     )
 
 
@@ -67,7 +98,7 @@ def make_vars() -> dict[str, list[int]]:
                 continue
             previous = out.setdefault(axis.make_var, axis.values)
             if previous != axis.values:
-                raise ValueError(
+                raise AxisConflictError(
                     f"{axis.make_var} declared twice with different values: "
                     f"{previous} vs {axis.values}"
                 )

@@ -12,54 +12,28 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+from tracecliff.exception import SweepCsvError
+from tracecliff.points import bench_for, load_points
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = REPO_ROOT / "results"
 ANALYZED_DIR_DEFAULT = RESULTS_DIR / "analyzed_results"
-
-# Averaged over the repetitions of each point. child_time_s is the clock the
-# rates are computed against; instr_/global_time_s are unused.
-NUMERIC_FIELDS = ["child_time_s", "overflow_count", "raw_trace_bytes", "atom_elem_sum"]
 
 # Ground truth. edges_total is NOT usable for addr: where the ETM's address
 # cache half-hits it undercounts by 3-10% while atoms stay exact.
 TRUE_METRIC = "atom_elem_sum"
 
-# bench_addr.c: every executed branch costs exactly 2 atom elements, so the
-# analytic count is 2 x branches.
-ATOMS_PER_BRANCH = 2
-ADDR_LOOP_UNROLL = 8  # iterations per unrolled block
-ADDR_LOOP_INDIRECT_PER_ITER = 2  # the indirect call and its return
-# A lap of N hops is the BL to t0, N-1 BRs and the final RET (N+1 branches),
-# plus the loop branch in bench() that starts the next lap.
-ADDR_CHAIN_LAP_OVERHEAD_BRANCHES = 2
-
 # Shortest run whose bytes/atom is trustworthy: below it the fixed trace-enable
 # preamble is a visible fraction of raw_trace_bytes.
 COST_MIN_ITERS = 100_000
-
 
 # A run is lossless when it lands within this much of the analytic count.
 LOSSLESS_TOL = 0.02
 LOSSLESS_ABS_SLACK = 256
 
-# Per-kind CSV column names and table labels.
-AXIS_FIELDS = {"addr": ("n_targets", "spacing")}
-AXIS_LABELS = {"addr": ("N", "stride S")}
-
-# Arm factors the report splits on. A sweep writes only the factors it varied,
-# so an absent column means "held fixed" and any constant serves as its key.
-ARM_FIELDS = ("etr", "bb")
-
-# Older sweeps named the overflow counter differently and kept a full path.
-LEGACY_COLUMNS = {
-    "etr_overflow_count": "overflow_count",
-    "etm_overflow_count": "overflow_count",
-    "binary": "binary_name",
-}
-
 
 # ---------------------------------------------------------------------------
-# Analytic ground truth
+# Ground truth
 # ---------------------------------------------------------------------------
 
 
@@ -72,121 +46,23 @@ def is_lossless(count, base):
     return count >= base - slack(base)
 
 
-def analytic_count(kind, variant, axes, iters):
-    """Atom elements a lossless trace of this point decodes, or None without a formula"""
-    if kind == "addr":
-        n_targets = axes[0]
-        if variant == "chain":
-            # The chain only runs whole laps of N hops: iters rounds up to one.
-            laps = -(-iters // n_targets)  # ceil
-            branches = laps * (n_targets + ADDR_CHAIN_LAP_OVERHEAD_BRANCHES)
-        else:
-            # One loop-back branch per block of ADDR_LOOP_UNROLL calls, then one
-            # per call in the tail loop that runs the remainder.
-            blocks, tail = divmod(iters, ADDR_LOOP_UNROLL)
-            branches = iters * ADDR_LOOP_INDIRECT_PER_ITER + blocks + tail
-        return branches * ATOMS_PER_BRANCH
-
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Loading / grouping
-# ---------------------------------------------------------------------------
-
-
-def to_float(v):
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
-
-
-def load_rows(path):
-    """Rows from a sweep CSV, with legacy column names normalised."""
-    with open(path, newline="") as f:
-        rows = list(csv.DictReader(f))
-    for r in rows:
-        for old, new in LEGACY_COLUMNS.items():
-            if old in r and new not in r:
-                r[new] = r.pop(old)
-    return rows
-
-
-def detect_kind(fieldnames):
-    if "n_targets" in fieldnames and "spacing" in fieldnames:
-        return "addr"
-    return None
-
-
-def detect_variant(rows):
-    """'chain' or 'loop' for an addr sweep, from the binary_name column."""
-    for r in rows:
-        base = (r.get("binary_name") or "").rsplit("/", 1)[-1]
-        if base.startswith("bench_chain_"):
-            return "chain"
-        if base.startswith("bench_"):
-            return "loop"
-    return None
-
-
-def fixed_factors(rows):
-    """The arm factors absent from these rows, i.e. fixed rather than swept."""
-    return tuple(f for f in ARM_FIELDS if f not in rows[0]) if rows else ()
-
-
-def point_key(row, kind):
-    """(row axis, col axis, iters, etr, bb) — the identity of one swept point."""
-    fields = AXIS_FIELDS[kind] + ("iters",)
-    return tuple(int(row[f]) for f in fields) + tuple(
-        int(row[f]) if f in row else 0 for f in ARM_FIELDS
-    )
-
-
-def workload_key(key):
-    """One workload, both arms stripped: TRUE_METRIC is etr- and bb-invariant."""
-    *axes, iters, _etr, _bb = key
-    return (tuple(axes), iters)
-
-
-def group_points(rows, kind):
-    """Average the repetitions at each (axis..., iters, etr, bb) point."""
-    groups = defaultdict(list)
-    for r in rows:
-        groups[point_key(r, kind)].append(r)
-
-    points = {}
-    for key, grp in groups.items():
-        agg = {"n_runs": len(grp)}
-        for f in NUMERIC_FIELDS:
-            vals = [v for v in (to_float(r.get(f)) for r in grp) if v is not None]
-            agg[f] = sum(vals) / len(vals) if vals else None
-            if f == TRUE_METRIC:
-                agg["n_ok"] = len(vals)
-        agg["true_count"] = agg[TRUE_METRIC]
-        agg["baseline_ref"] = None  # filled in by compute_baselines
-        points[key] = agg
-    return points
+def true_count(point):
+    return point.mean(TRUE_METRIC)
 
 
 def by_workload(points):
-    """Points that measured anything, grouped under their workload key."""
+    """Points that measured anything, grouped under their workload."""
     out = defaultdict(list)
-    for key, agg in points.items():
-        if agg["true_count"] is not None:
-            out[workload_key(key)].append(agg)
+    for key, p in points.items():
+        if true_count(p) is not None:
+            out[key.workload].append(p)
     return out
 
 
-def best_run(aggs):
-    """The run a workload's baseline leans on, and whether it overflowed."""
-    best = max(aggs, key=lambda a: a["true_count"])
-    return best, best.get("overflow_count") or 0
-
-
-def axis_values(points):
-    """The five key components, each sorted: rows, cols, iters, etrs, bbs."""
-    return tuple(sorted({k[i] for k in points}) for i in range(5))
+def best_run(ps):
+    """The point a workload's baseline leans on, and whether it overflowed."""
+    best = max(ps, key=true_count)
+    return best, best.mean("overflow_count") or 0
 
 
 # ---------------------------------------------------------------------------
@@ -199,15 +75,14 @@ def axis_values(points):
 REF_NO_ANALYTIC = "measured-max (no analytic count for this config)"
 
 
-def compute_baselines(points, kind, variant=None):
+def compute_baselines(points, bench):
     """Per-workload lossless reference counts, tagging provenance on each point.
     Analytic where derivable; measured runs only corroborate it."""
     baselines = {}
-    for wkey, aggs in by_workload(points).items():
-        axes, iters = wkey
-        expected = analytic_count(kind, variant, axes, iters)
-        best, best_ovf = best_run(aggs)
-        observed = best["true_count"]
+    for wkey, ps in by_workload(points).items():
+        expected = bench.expected_atoms(wkey) if bench.expected_atoms else None
+        best, best_ovf = best_run(ps)
+        observed = true_count(best)
 
         if expected is None:
             baselines[wkey] = observed
@@ -233,25 +108,24 @@ def compute_baselines(points, kind, variant=None):
 
         # Stored on every point of the workload: one home for provenance, which
         # is what carries it into the analyzed CSV.
-        for agg in aggs:
-            agg["baseline_ref"] = ref
+        for p in ps:
+            p.loss = {"baseline_ref": ref}
 
     return baselines
 
 
 def reference_bytes_per_atom(points, baselines):
-    """Trace bytes per atom, per (axes, bb), from that key's longest clean runs.
+    """Trace bytes per atom, per (axes but iters, bb), from its longest clean runs.
     Short runs inflate it (preamble), lossy runs understate it."""
     per_key = defaultdict(list)
-    for key, agg in points.items():
-        *axes, iters, _etr, bb = key
-        base = baselines.get(workload_key(key))
-        raw, true = agg.get("raw_trace_bytes"), agg.get("true_count")
-        if agg.get("overflow_count") or not base or not raw or not true:
+    for key, p in points.items():
+        base = baselines.get(key.workload)
+        raw, true = p.mean("raw_trace_bytes"), true_count(p)
+        if p.mean("overflow_count") or not base or not raw or not true:
             continue
-        if iters < COST_MIN_ITERS or not is_lossless(true, base):
+        if key.iters < COST_MIN_ITERS or not is_lossless(true, base):
             continue
-        per_key[(tuple(axes), bb)].append((iters, raw / true))
+        per_key[(key.axes[:-1], key.arm("bb"))].append((key.iters, raw / true))
 
     out = {}
     for k, vals in per_key.items():
@@ -265,10 +139,10 @@ def reference_branch_times(points, baselines):
     """Per-workload seconds-per-branch from its least-stalled lossless run,
     free of the stall bias a lossy run's own average carries."""
     best = {}
-    for key, agg in points.items():
-        wkey = workload_key(key)
+    for key, p in points.items():
+        wkey = key.workload
         base = baselines.get(wkey)
-        secs, count = agg.get("child_time_s"), agg["true_count"]
+        secs, count = p.mean("child_time_s"), true_count(p)
         if not base or not secs or not count or not is_lossless(count, base):
             continue
         per_branch = secs / base
@@ -277,8 +151,8 @@ def reference_branch_times(points, baselines):
     return best
 
 
-# Every key annotate() derives, so a point that derives nothing still carries
-# the full set (the CSV writer reads them all).
+# Every key annotate() derives into Point.loss, so a point that derives nothing
+# still carries the full set (the CSV writer reads them all).
 DERIVED_DEFAULTS = {
     "loss_pct": None,
     "baseline_edges": None,
@@ -294,27 +168,26 @@ DERIVED_DEFAULTS = {
 
 
 def annotate(points, baselines, ref_branch_times, ref_bytes_per_atom):
-    for key, agg in points.items():
-        *axes, _, _, bb = key
-        wkey = workload_key(key)
+    for key, p in points.items():
+        wkey = key.workload
         base = baselines.get(wkey)
-        agg.update(DERIVED_DEFAULTS)
+        agg = p.loss = {"baseline_ref": None, **(p.loss or {}), **DERIVED_DEFAULTS}
         agg["baseline_edges"] = base
-        if not base or agg["true_count"] is None:
+        count, secs = true_count(p), p.mean("child_time_s")
+        if not base or count is None:
             continue
 
-        count, secs = agg["true_count"], agg.get("child_time_s")
         agg["loss_pct"] = max(0.0, (base - count) / base * 100.0)
         if secs:
             # offered = what the workload generated, delivered = what came back,
             # bytes_per_s = what the sink moved (the quantity ETR limits).
             agg["offered_edge_rate"] = base / secs
             agg["delivered_edge_rate"] = count / secs
-            if agg.get("raw_trace_bytes"):
-                agg["bytes_per_s"] = agg["raw_trace_bytes"] / secs
+            if p.mean("raw_trace_bytes"):
+                agg["bytes_per_s"] = p.mean("raw_trace_bytes") / secs
             # An estimate on lossy points: the baseline atom count priced at
             # the packet cost of this workload's own clean runs.
-            bpa = ref_bytes_per_atom.get((tuple(axes), bb))
+            bpa = ref_bytes_per_atom.get((key.axes[:-1], key.arm("bb")))
             if bpa:
                 agg["offered_byte_rate"] = base * bpa / secs
 
@@ -331,19 +204,22 @@ def annotate(points, baselines, ref_branch_times, ref_bytes_per_atom):
         elif secs:
             ref = secs / base  # fall back to this run's own rate
             agg["escape_window_ref"] = "self (stall-biased)"
-        n_ovf = agg.get("overflow_count")
+        n_ovf = p.mean("overflow_count")
         # Meaningless where true_count is a framing artefact rather than a count.
         if n_ovf and missing and ref and not agg["inflated"]:
             agg["escape_window_s"] = (missing / n_ovf) * ref
 
 
-CSV_AGG_FIELDS = [
-    "n_runs",
-    "n_ok",
-    "atom_elem_sum",
-    "true_count",
-    "overflow_count",
-    "child_time_s",
+# Analyzed CSV columns after the key: each read off the point, then its loss.
+CSV_POINT_FIELDS = {
+    "n_runs": lambda p: p.n_runs,
+    "n_ok": lambda p: p.n_ok(TRUE_METRIC),
+    "atom_elem_sum": lambda p: p.mean("atom_elem_sum"),
+    "true_count": true_count,
+    "overflow_count": lambda p: p.mean("overflow_count"),
+    "child_time_s": lambda p: p.mean("child_time_s"),
+}
+CSV_LOSS_FIELDS = [
     "baseline_edges",
     "baseline_ref",
     "loss_pct",
@@ -358,13 +234,25 @@ CSV_AGG_FIELDS = [
 ]
 
 
-def write_csv_out(points, kind, out_path):
-    key_fields = AXIS_FIELDS[kind] + ("iters", "etr", "bb")
+def write_csv_out(points, bench, out_path):
+    keys = sorted(points)
+    arm_fields = [name for name, _ in keys[0].arms]
     with out_path.open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(list(key_fields) + CSV_AGG_FIELDS)
-        for key in sorted(points):
-            w.writerow(list(key) + [points[key][f] for f in CSV_AGG_FIELDS])
+        w.writerow(
+            [a.field for a in bench.axes]
+            + arm_fields
+            + list(CSV_POINT_FIELDS)
+            + CSV_LOSS_FIELDS
+        )
+        for key in keys:
+            p = points[key]
+            w.writerow(
+                list(key.axes)
+                + [v for _, v in key.arms]
+                + [get(p) for get in CSV_POINT_FIELDS.values()]
+                + [p.loss[f] for f in CSV_LOSS_FIELDS]
+            )
     print(f"  wrote {out_path}")
 
 
@@ -374,26 +262,20 @@ def write_csv_out(points, kind, out_path):
 
 
 def analyze_file(path, csv_out):
-    rows = load_rows(path)
-    if not rows:
+    bench = bench_for(path)
+    if bench is None:
+        print(f"\n{path}: no bench name prefix in the filename, skipping")
+        return None
+    try:
+        points = load_points(path, bench)
+    except SweepCsvError as e:
+        print(f"\n{e}, skipping")
+        return None
+    if not points:
         print(f"\n{path}: empty, skipping")
         return None
-    kind = detect_kind(rows[0].keys())
-    if kind is None:
-        print(f"\n{path}: unrecognized schema (no n_targets/spacing columns), skipping")
-        return None
 
-    # Not a warning: a sweep may hold factors fixed. Printed so the arms below
-    # are not read as covering a grid the sweep never walked.
-    fixed = fixed_factors(rows)
-    if fixed:
-        print(
-            f"\n{path.name}: {', '.join(fixed)} not swept "
-            "(fixed for this sweep) — arms below collapse to one level"
-        )
-
-    points = group_points(rows, kind)
-    baselines = compute_baselines(points, kind, detect_variant(rows))
+    baselines = compute_baselines(points, bench)
     annotate(
         points,
         baselines,
@@ -404,13 +286,13 @@ def analyze_file(path, csv_out):
     # Imported here: reporter imports back from this module.
     from tracecliff import reporter
 
-    reporter.report(points, kind, path.name)
+    reporter.report(points, bench, path.name)
 
     if csv_out:
         ANALYZED_DIR_DEFAULT.mkdir(parents=True, exist_ok=True)
-        write_csv_out(points, kind, ANALYZED_DIR_DEFAULT / f"analyzed_{path.stem}.csv")
+        write_csv_out(points, bench, ANALYZED_DIR_DEFAULT / f"analyzed_{path.stem}.csv")
 
-    return kind, points
+    return bench, points
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
