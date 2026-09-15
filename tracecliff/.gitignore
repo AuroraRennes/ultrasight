@@ -1,4 +1,6 @@
 bin/*
 !bin/README.md
+results/*
+!results/README.md
 
 __pycache__/
