@@ -39,9 +39,10 @@ class PointKey:
         return self.axes[-1]
 
     @property
-    def workload(self) -> tuple[int, ...]:
-        """What the benchmark ran, whatever the trace configuration."""
-        return self.axes
+    def workload(self) -> tuple[tuple[int, ...], str | None]:
+        """The benchmark and address filter, which decide what a lossless trace
+        contains; None when the CSV has no addrfilter column."""
+        return self.axes, self.arm("addrfilter")
 
     def arm(self, name: str) -> str | None:
         return dict(self.arms).get(name)

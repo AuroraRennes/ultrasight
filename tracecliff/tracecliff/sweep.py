@@ -116,8 +116,10 @@ class Bench:
                 emitted whenever that prefix changes
     detail      optional extra banner line, e.g. addr's --kind
     expected_atoms
-                maps one point to the atom elements a lossless trace of it
-                decodes, or None when no formula covers the benchmark
+                maps one point and its addrfilter value (None when not swept)
+                to the atom elements a lossless trace of it decodes, returning
+                None where no formula covers that scope; None when no formula
+                covers the benchmark at all
     """
 
     name: str
@@ -125,7 +127,7 @@ class Bench:
     binary_name: Callable[[tuple[int, ...]], str]
     group_depth: int = 1
     detail: str = ""
-    expected_atoms: Callable[[tuple[int, ...]], int] | None = None
+    expected_atoms: Callable[[tuple[int, ...], str | None], int | None] | None = None
 
     def sweep_fields(self, factor_fields: list[str]) -> list[str]:
         return [a.field for a in self.axes] + factor_fields + [RUN_FIELD]

@@ -81,7 +81,7 @@ def workload_baselines(points, bench):
     Analytic where derivable; measured runs only corroborate it."""
     baselines = {}
     for wkey, ps in by_workload(points).items():
-        expected = bench.expected_atoms(wkey) if bench.expected_atoms else None
+        expected = bench.expected_atoms(*wkey) if bench.expected_atoms else None
         best, best_ovf = best_run(ps)
         observed = true_count(best)
 
