@@ -1,6 +1,6 @@
 # results/
 
-CSVs written by `tracecliff sweep-addr`.
+CSVs written by `tracecliff sweep-addr` and `tracecliff sweep-call`.
 
 Naming: `<kind>_<factor tags>_<timestamp>.csv`, one tag per swept factor holding its values (e.g. `etr0-1_bb0-1`, `stalloff-3`), and a `+HHMM` UTC offset on the timestamp.
 
@@ -8,6 +8,7 @@ Naming: `<kind>_<factor tags>_<timestamp>.csv`, one tag per swept factor holding
 |---|---|
 | `addr_loop` | `tracecliff sweep-addr --kind loop` |
 | `addr_chain` | `tracecliff sweep-addr --kind chain` |
+| `call` | `tracecliff sweep-call` |
 
 | other file | description |
 |---|---|

@@ -128,11 +128,19 @@ def report(points, bench, fname):
     arms = arm_values(points)
     varying = {name: values for name, values in arms.items() if len(values) > 1}
     fixed = [f"{name}={values[0]}" for name, values in arms.items() if len(values) == 1]
-    row_axis, col_axis, iters_axis = bench.axes
-    rows, cols = axes[row_axis.field], axes[col_axis.field]
+    # A two-axis bench prints a grid; a one-axis bench a single loss% column.
+    *grid_axes, iters_axis = bench.axes
+    row_axis = grid_axes[0]
+    rows = axes[row_axis.field]
+    if len(grid_axes) == 2:
+        col_label = grid_axes[1].field
+        cols = axes[col_label]
+    else:
+        col_label, cols = "loss%", ["loss%"]
     max_iters = max(axes[iters_axis.field])
 
-    print(f"\n{'=' * 78}\n{fname}  ({bench.name}: {row_axis.field} x {col_axis.field})")
+    grid_names = " x ".join(a.field for a in grid_axes)
+    print(f"\n{'=' * 78}\n{fname}  ({bench.name}: {grid_names})")
     for name, values in axes.items():
         print(f"{name} values: {values}")
     for name, values in varying.items():
@@ -150,7 +158,10 @@ def report(points, bench, fname):
         cells = {}
         for r in rows:
             for c in cols:
-                p = by_cell.get(((r, c, max_iters), arms_key))
+                point_axes = (
+                    (r, c, max_iters) if len(grid_axes) == 2 else (r, max_iters)
+                )
+                p = by_cell.get((point_axes, arms_key))
                 cells[r, c] = fmt_pct(p.loss.loss_pct if p else None)
         label = " ".join(f"{name}={v}" for name, v in chosen.items()) or "all points"
         print_grid(
@@ -159,7 +170,7 @@ def report(points, bench, fname):
             cols,
             cells,
             row_axis.field,
-            col_axis.field,
+            col_label,
         )
 
     edge_rate_view(points)

@@ -1,16 +1,21 @@
 # bench/Makefile — CoreSight ETM overflow characterization binaries
 #
-# Cross-compiles bench_addr.c for Zynq (Cortex-A, aarch64 Linux).
+# Cross-compiles bench_addr.c and bench_call.c for Zynq (Cortex-A, aarch64 Linux).
 #
 # Targets:
-#   make                          — build everything (addr_loop, addr_chain)
+#   make                          — build everything (addr_loop, addr_chain, call)
 #   make addr_loop                — build all (N, S) combinations
 #   make addr_chain               — chain-mode equivalent of 'addr_loop'
+#   make call                     — bench_call.c, every CALL_EVERY value
 #   make dump N=64 S=4096 I=1000  — disassemble a specific bench_addr binary
 #   make clean
 #
 # Chain mode (bench_chain_nN_sS_iI) replaces the call/return loop with a
 # hand-written asm stub chain (see tracecliff/gen_chain.py)
+#
+# Call mode (bench_call_cC_iI, bench_call.c): a PLT call into libc every
+# CALL_EVERY iterations, the only family whose execution leaves the tracee text.
+# Built dynamically linked on purpose, see the header of src/bench_call.c.
 #
 # Parameters (override on command line):
 #   CROSS   — toolchain prefix     (default: aarch64-linux-gnu-)
@@ -19,7 +24,7 @@
 #   I       — single ITERS for 'make dump'
 #
 # Every target builds its binaries into its own subdirectory of bin/:
-#   bin/addr_loop/, bin/addr_chain/
+#   bin/addr_loop/, bin/addr_chain/, bin/call/
 
 CROSS   ?= aarch64-linux-gnu-
 CC      := $(CROSS)gcc
@@ -29,6 +34,7 @@ CFLAGS  := -O1 -g -Wall -Wextra
 LDFLAGS := -lrt
 
 SRC := src/bench_addr.c
+CALL_SRC := src/bench_call.c
 
 # N/S/ITERS sweep axes, not defined here: axes.mk is generated from
 # tracecliff/benches.py, which is also what the sweeps iterate over, so the
@@ -38,6 +44,8 @@ SRC := src/bench_addr.c
 #                3+ targets = past the ETM exact-match history depth (3 slots)
 #   ADDR_STRIDE_LIST: byte alignment between stub targets, 0 up to one page
 #   ITERS_LIST: iteration counts
+#   CALL_LIST: iterations between library calls (inverse crossing rate)
+#   CALL_ITERS_LIST: iteration counts for the call family
 
 # axes.mk's rule is the first one in this file, it would otherwise become the
 # default goal and bare 'make' would build nothing else.
@@ -54,8 +62,9 @@ DEFAULT_ITERS := 1000
 BINDIR           := bin
 ADDR_LOOP_DIR    := $(BINDIR)/addr_loop
 ADDR_CHAIN_DIR   := $(BINDIR)/addr_chain
+CALL_DIR         := $(BINDIR)/call
 
-BIN_DIRS := $(ADDR_LOOP_DIR) $(ADDR_CHAIN_DIR)
+BIN_DIRS := $(ADDR_LOOP_DIR) $(ADDR_CHAIN_DIR) $(CALL_DIR)
 
 # Generated chain-mode stub assembly (see gen_chain.py)
 CHAINS_DIR := chains
@@ -65,10 +74,11 @@ ADDR_LOOP_BINS := $(foreach n,$(ADDR_N_LIST),$(foreach s,$(ADDR_STRIDE_LIST),$(f
 CHAIN_ASMS := $(foreach n,$(ADDR_N_LIST),$(foreach s,$(ADDR_STRIDE_LIST),$(CHAINS_DIR)/chain_n$(n)_s$(s).S))
 ADDR_CHAIN_BINS := $(foreach n,$(ADDR_N_LIST),$(foreach s,$(ADDR_STRIDE_LIST),$(foreach i,$(ITERS_LIST),$(ADDR_CHAIN_DIR)/bench_chain_n$(n)_s$(s)_i$(i))))
 
+CALL_BINS := $(foreach c,$(CALL_LIST),$(foreach i,$(CALL_ITERS_LIST),$(CALL_DIR)/bench_call_c$(c)_i$(i)))
 
-.PHONY: all addr_loop addr_chain dump clean
+.PHONY: all addr_loop addr_chain call dump clean
 
-all: addr_loop addr_chain
+all: addr_loop addr_chain call
 
 # Directory creation
 $(BIN_DIRS) $(CHAINS_DIR):
@@ -77,6 +87,8 @@ $(BIN_DIRS) $(CHAINS_DIR):
 addr_loop: $(ADDR_LOOP_BINS)
 
 addr_chain: $(ADDR_CHAIN_BINS)
+
+call: $(CALL_BINS)
 
 # Generated rule for each (N, S, I) triple, $(4) is the output directory
 define BUILD_RULE
@@ -104,6 +116,17 @@ $(4)/bench_chain_n$(1)_s$(2)_i$(3): $(SRC) $(CHAINS_DIR)/chain_n$(1)_s$(2).S | $
 endef
 
 $(foreach n,$(ADDR_N_LIST),$(foreach s,$(ADDR_STRIDE_LIST),$(foreach i,$(ITERS_LIST),$(eval $(call CHAIN_BUILD_RULE,$(n),$(s),$(i),$(ADDR_CHAIN_DIR))))))
+
+# Generated rule for each call-mode (CALL_EVERY, ITERS) pair. No -static: the
+# callee has to sit in a mapping the ETM range does not cover. -fno-builtin
+# keeps strlen a real PLT call rather than an inline expansion.
+define CALL_BUILD_RULE
+$(CALL_DIR)/bench_call_c$(1)_i$(2): $(CALL_SRC) | $(CALL_DIR)
+	$(CC) $(CFLAGS) -fno-builtin -DCALL_EVERY=$(1) -DITERS=$(2) $$< $(LDFLAGS) -o $$@
+
+endef
+
+$(foreach c,$(CALL_LIST),$(foreach i,$(CALL_ITERS_LIST),$(eval $(call CALL_BUILD_RULE,$(c),$(i)))))
 
 # Disassemble a specific binary
 N ?= 64

@@ -5,13 +5,15 @@ tracecliff cli — single entry point aggregating every tracecliff subcommand.
 
 Subcommands:
     sweep-addr       drive cs-trace over bench_addr.c binaries
+    sweep-call       drive cs-trace over bench_call.c binaries (range-crossing stress)
     gen-chain        emit chain-mode stub assembly for bench_addr.c's chain mode
     analyze          read sweep CSVs back and report loss%
     axes             print the sweep axes (--make: as Make variables, for axes.mk)
-    run-all          run sweep-addr (kind=loop, kind=chain) sequentially,
-                     sharing cs-trace/cs-flags/runs and the swept factors
+    run-all          run sweep-addr (kind=loop, kind=chain) then sweep-call
+                     sequentially, sharing cs-trace/cs-flags/runs and the
+                     swept factors
 
-sweep-addr and run-all must be run as root (cs-trace needs /dev/mem access), e.g.:
+sweep-addr, sweep-call and run-all must be run as root (cs-trace needs /dev/mem access), e.g.:
 
     sudo python3 -m tracecliff run-all --cs-flags "-b ZCU-104 -c 0"
 
@@ -48,6 +50,18 @@ def addr_config(args: argparse.Namespace) -> sweep.Config:
     )
 
 
+def add_call_arguments(parser: argparse.ArgumentParser) -> None:
+    sweep.add_common_arguments(
+        parser,
+        bench_dir_help="directory containing bench_call_c*_i* binaries "
+        "(default: bin/call)",
+    )
+
+
+def call_config(args: argparse.Namespace) -> sweep.Config:
+    return sweep.config_from_args(args, benches.CALL_BENCH, benches.CALL_BENCH_SUBDIR)
+
+
 def add_run_all_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--cs-trace",
@@ -70,17 +84,22 @@ def run_all(args: argparse.Namespace) -> None:
     cs_flags = shlex.split(args.cs_flags)
     factors = sweep.factors_from_args(args)
 
-    for kind in ("loop", "chain"):
-        addr_cfg = sweep.Config(
-            bench=benches.addr_bench(kind),
+    runs = [
+        (benches.addr_bench(kind), benches.ADDR_BENCH_SUBDIR[kind])
+        for kind in ("loop", "chain")
+    ] + [(benches.CALL_BENCH, benches.CALL_BENCH_SUBDIR)]
+
+    for bench, subdir in runs:
+        cfg = sweep.Config(
+            bench=bench,
             cs_trace=args.cs_trace,
-            bench_dir=REPO_ROOT / benches.ADDR_BENCH_SUBDIR[kind],
+            bench_dir=REPO_ROOT / subdir,
             cs_flags=cs_flags,
             runs=args.runs,
             factors=factors,
         )
-        print(f"=== addr_{kind} ===")
-        sweep.run(addr_cfg)
+        print(f"=== {bench.name} ===")
+        sweep.run(cfg)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -102,6 +121,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_addr_arguments(p)
     p.set_defaults(func=lambda args: sweep.run(addr_config(args)))
+
+    p = subparsers.add_parser(
+        "sweep-call",
+        help="drive cs-trace over bench_call.c binaries",
+        description="Drive cs-trace over bench_call.c binaries (PLT calls out of the "
+        "traced range into libc). Must be run as root.\n\n"
+        "Example:\n"
+        "    sudo python3 -m tracecliff sweep-call --factor addrfilter=etm,none",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    add_call_arguments(p)
+    p.set_defaults(func=lambda args: sweep.run(call_config(args)))
 
     p = subparsers.add_parser(
         "gen-chain",
@@ -141,8 +172,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = subparsers.add_parser(
         "run-all",
-        help="run sweep-addr (loop, chain) sequentially",
-        description="Run sweep-addr (kind=loop, kind=chain) sequentially, "
+        help="run sweep-addr (loop, chain) then sweep-call sequentially",
+        description="Run sweep-addr (kind=loop, kind=chain) then sweep-call sequentially, "
         "sharing cs-trace/cs-flags/runs and the swept factors. Must be run as root.\n\n"
         "Example:\n"
         "    sudo python3 -m tracecliff run-all",

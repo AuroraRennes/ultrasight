@@ -80,8 +80,36 @@ def addr_bench(kind: str) -> Bench:
     )
 
 
+# ---------------------------------------------------------------------------
+# call — range-crossing stress (src/bench_call.c)
+# ---------------------------------------------------------------------------
+
+# CALL_EVERY: iterations between successive PLT calls into libc, the INVERSE of
+# crossing density (larger = crossing-sparser). 0 never calls: the control
+# point, same loop and no range crossing, where addrfilter=etm and none agree.
+CALL_EVERY_LIST = [0, 1, 4, 16, 64]
+# ITERS for call binaries only, independent of the addr families' ITERS_LIST.
+CALL_ITERS_LIST = [10_000_000]
+
+CALL_BENCH_SUBDIR = "bin/call"
+
+CALL_BENCH = Bench(
+    name="call",
+    axes=(
+        Axis("call_every", "c", CALL_EVERY_LIST, make_var="CALL_LIST"),
+        Axis("iters", "iters", CALL_ITERS_LIST, width=10, make_var="CALL_ITERS_LIST"),
+    ),
+    binary_name=lambda p: f"bench_call_c{p[0]}_i{p[1]}",
+    # one printed block per CALL_EVERY, i.e. its ITERS row
+    group_depth=1,
+    # No formula: strlen's libc branches are traced or not depending on
+    # addrfilter, so the atom count is not a property of the binary alone.
+    expected_atoms=None,
+)
+
+
 # Every Bench, for the axes emitter.
-ALL_BENCHES = (addr_bench("loop"), addr_bench("chain"))
+ALL_BENCHES = (addr_bench("loop"), addr_bench("chain"), CALL_BENCH)
 
 
 # ---------------------------------------------------------------------------

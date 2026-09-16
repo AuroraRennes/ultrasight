@@ -20,6 +20,12 @@ Factors:
                 to infer control-flow
     stall   --stall
             off, or the ISTALL FIFO level at which the ETM stalls the core
+    addrfilter --addrfilter
+            where the tracee text range is enforced: etm (ETM address
+            comparators), pl (decoder, the ETM traces all of EL0) or none
+    bbfilter --bbfilter
+            where branch broadcast applies: all, in (inside the tracee text)
+            or out (outside it)
 """
 
 import argparse
@@ -70,6 +76,8 @@ FACTOR_FLAGS = {
     "etr": "--useetr",
     "bb": "--branchbroadcast",
     "stall": "--stall",
+    "addrfilter": "--addrfilter",
+    "bbfilter": "--bbfilter",
 }
 
 # What a sweep varies if it says nothing
@@ -408,7 +416,7 @@ def add_factor_arguments(parser: argparse.ArgumentParser) -> None:
         default=[],
         metavar="NAME=V1,V2",
         help="sweep cs-trace knob NAME over the listed values, e.g. "
-        "--factor stall=off,3. "
+        "--factor stall=off,3 --factor addrfilter=etm,none. "
         f"NAME is one of: {', '.join(FACTOR_FLAGS)}. Repeatable; "
         "the cross product of every --factor is walked. Giving any "
         "--factor replaces the default etr/bb sweep unless they are "
