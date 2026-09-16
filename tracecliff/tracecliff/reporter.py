@@ -6,7 +6,18 @@ import statistics
 from collections import Counter
 from itertools import product
 
-from tracecliff.analyzer import REF_NO_ANALYTIC, best_run, by_workload, true_count
+from tracecliff.analyzer import (
+    OUTCOME_FIELD,
+    REF_NO_ANALYTIC,
+    REFERENCE_ARMS,
+    REFERENCE_BINARY,
+    best_run,
+    branches,
+    by_workload,
+    delivered,
+    find_reference,
+    true_count,
+)
 from tracecliff.points import arm_values, axis_values
 
 MAX_TAINTED_SHOWN = 10
@@ -246,3 +257,159 @@ def tainted_report(points, bench):
         )
     if len(tainted) > MAX_TAINTED_SHOWN:
         print(f"       ... and {len(tainted) - MAX_TAINTED_SHOWN} more")
+
+
+# ---------------------------------------------------------------------------
+# Per-arm report
+# ---------------------------------------------------------------------------
+
+# Column order. overflow_count is the only outcome; the rest explain it, and
+# never stand in for it.
+OUTCOME = OUTCOME_FIELD
+COVARIATES = ["child_time_s", "raw_trace_bytes", "atom_elem_sum"]
+# Derived, not a CSV column: the share of the expected atom stream that arrived.
+# The guard every stage requires, since back-pressure relocates loss rather
+# than removing it.
+DELIVERED = "delivered"
+ARM_METRICS = [OUTCOME] + COVARIATES + [DELIVERED]
+
+
+def fmt_value(v, width=12):
+    if v is None:
+        return "ERR".rjust(width)
+    if v == 0:
+        return "0".rjust(width)
+    if abs(v) >= 1e6 or (abs(v) < 1e-3):
+        return f"{v:.3e}".rjust(width)
+    if abs(v) >= 100:
+        return f"{v:,.0f}".rjust(width)
+    return f"{v:.4f}".rjust(width)
+
+
+def fmt_delta(point_v, ref_v, width=14):
+    """A ratio, or an absolute where the reference is zero."""
+    if point_v is None or ref_v is None:
+        return "-".rjust(width)
+    if ref_v == 0:
+        return "=0".rjust(width) if point_v == 0 else f"+{point_v:.4g}".rjust(width)
+    return f"x{point_v / ref_v:.3f}".rjust(width)
+
+
+def arm_spread(point, metric):
+    """Rep-to-rep sd of one metric, 0 for values derived from a mean."""
+    if metric == DELIVERED:
+        return 0.0
+    vals = point.samples.get(metric) or []
+    return statistics.stdev(vals) if len(vals) > 1 else 0.0
+
+
+def arm_value(point, metric, per_branch=False):
+    """One metric, optionally per branch"""
+    if metric == DELIVERED:
+        return delivered(point)
+    v = point.mean(metric)
+    if v is None or not per_branch:
+        return v
+    br = branches(point)
+    return v / br if br else None
+
+
+def arm_label(key):
+    return " ".join(f"{name}={v}" for name, v in key.arms) or "(defaults)"
+
+
+def workload_label(key, bench):
+    return " ".join(f"{a.field}={v}" for a, v in zip(bench.axes, key.axes))
+
+
+def report_arms(points, bench, fname, per_branch=False, reference=None):
+    """Every point as a difference from its workload's reference arm."""
+    reference = reference or REFERENCE_ARMS
+    arm_fields = [name for name, _v in next(iter(points)).arms]
+    per_workload, global_ref = find_reference(points, reference)
+
+    print(f"\n{'=' * 78}\n{fname}  ({bench.name})")
+    print(f"axes    : {', '.join(a.field for a in bench.axes)}")
+    print(f"factors : {', '.join(arm_fields) or '(none)'}")
+    print(f"points  : {len(points)}  ({sum(p.n_runs for p in points.values())} runs)")
+    ref_desc = " ".join(f"{k}={v}" for k, v in reference.items() if k in arm_fields)
+    print(f"reference level: {ref_desc or '(no swept factor is at a reference level)'}")
+    if global_ref is not None:
+        print(
+            f"reference point present: {REFERENCE_BINARY} "
+            f"({global_ref.n_runs} reps, "
+            f"{OUTCOME}={fmt_value(global_ref.mean(OUTCOME)).strip()}, "
+            f"sd={fmt_value(arm_spread(global_ref, OUTCOME)).strip()})"
+        )
+    if not per_workload:
+        print(
+            "WARNING: no reference point in this CSV — the sweep never visited "
+            "the reference level, so every difference below would be against "
+            "nothing. Reporting absolute values only."
+        )
+
+    unit = "/branch" if per_branch else ""
+
+    def col(m):
+        """`delivered` is a ratio, so it never takes the /branch suffix."""
+        return m if m == DELIVERED else m + unit
+
+    # Widened to the data, so a long label cannot eat the column beside it.
+    wl_w = max([len(workload_label(k, bench)) for k in points] + [len("workload")]) + 2
+    fc_w = max([len(arm_label(k)) for k in points] + [len("factors")]) + 2
+    # Headers are wider than any value once "/branch" is appended.
+    mw = max([len(col(m)) for m in ARM_METRICS] + [len(OUTCOME) + 3]) + 2
+    header = (
+        f"  {'workload':<{wl_w}}{'factors':<{fc_w}}"
+        + "".join(f"{col(m):>{mw}}" for m in ARM_METRICS)
+        + f"{'d(' + OUTCOME + ')':>{mw}}"
+    )
+    print("\n" + header)
+    print("  " + "-" * (len(header) - 2))
+
+    # Workloads in CSV order, reference arm first within each.
+    for axes in dict.fromkeys(k.axes for k in points):
+        group = [(k, p) for k, p in points.items() if k.axes == axes]
+        ref = per_workload.get(axes)
+        group.sort(key=lambda kp: (kp[1] is not ref, arm_label(kp[0])))
+        for key, point in group:
+            is_ref = point is ref
+            vals = "".join(
+                fmt_value(arm_value(point, m, per_branch), mw) for m in ARM_METRICS
+            )
+            delta = (
+                "reference".rjust(mw)
+                if is_ref
+                else fmt_delta(
+                    arm_value(point, OUTCOME, per_branch),
+                    arm_value(ref, OUTCOME, per_branch) if ref else None,
+                    mw,
+                )
+            )
+            print(
+                f" {'*' if is_ref else ' '}{workload_label(key, bench):<{wl_w}}"
+                f"{arm_label(key):<{fc_w}}{vals}{delta}"
+            )
+        print()
+
+    arm_spread_note(per_workload, bench, wl_w)
+
+
+def arm_spread_note(per_workload, bench, wl_w):
+    """The reference arms' rep-to-rep spread: the resolution floor every
+    difference above has to clear to be a result."""
+    if not per_workload:
+        return
+    print("  reference spread (rep-to-rep sd, the resolution floor):")
+    for point in per_workload.values():
+        if point.n_runs < 2:
+            continue
+        parts = []
+        for m in ARM_METRICS:
+            mean, sd = arm_value(point, m), arm_spread(point, m)
+            rel = f" ({sd / mean * 100:.1f}%)" if mean else ""
+            parts.append(f"{m}={fmt_value(sd).strip()}{rel}")
+        print(
+            f"    {workload_label(point.key, bench):<{wl_w}}"
+            f"n={point.n_runs}  " + "  ".join(parts)
+        )

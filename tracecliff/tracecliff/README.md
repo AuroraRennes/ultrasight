@@ -8,6 +8,7 @@ The Python driver and analysis code, run from the repo root (see the top-level `
 | `sweep-call` | `sweep.py` + `benches.py` | drives `cs-trace` over the built `bench_call.c` binaries and writes CSVs into `../results/` |
 | `axes` | `benches.py` | prints the sweep axes; `--make` emits them as Make variables (see below) |
 | `analyze` | `points.py` + `analyzer.py` + `reporter.py` | reads CSVs back from `../results/` and produces the text report and `--csv-out` summaries |
+| `micro` | `analyzer.py` + `reporter.py` | reads CSVs back from `../results/` and prints each point as a difference from its workload's reference arm (`--per-branch`, `--reference NAME=VALUE`) |
 | `gen-chain` | `gen_chain.py` | generates the chain-mode stub assembly in `../chains/`, invoked automatically by the Makefile |
 | `run-all` | (in `cli.py`) | runs `sweep-addr` (loop, chain) then `sweep-call` sequentially, sharing `--cs-trace`/`--cs-flags`/`--runs` and the swept factors |
 

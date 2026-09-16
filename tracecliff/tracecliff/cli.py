@@ -8,6 +8,7 @@ Subcommands:
     sweep-call       drive cs-trace over bench_call.c binaries (range-crossing stress)
     gen-chain        emit chain-mode stub assembly for bench_addr.c's chain mode
     analyze          read sweep CSVs back and report loss%
+    micro            report each sweep point as a difference from the reference point
     axes             print the sweep axes (--make: as Make variables, for axes.mk)
     run-all          run sweep-addr (kind=loop, kind=chain) then sweep-call
                      sequentially, sharing cs-trace/cs-flags/runs and the
@@ -155,6 +156,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analyzer.add_arguments(p)
     p.set_defaults(func=analyzer.run)
+
+    p = subparsers.add_parser(
+        "micro",
+        help="report each sweep point as a difference from the reference point",
+        description="Report each sweep point as a difference from the reference point.\n\n"
+        "Unlike analyze, nothing is measured against an analytic baseline: the\n"
+        "sweeps vary cs-trace configuration, so the question is what one knob did.\n\n"
+        "Example:\n"
+        "    python3 -m tracecliff micro --per-branch",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    analyzer.add_arm_arguments(p)
+    p.set_defaults(func=analyzer.run_arms)
 
     p = subparsers.add_parser(
         "axes",

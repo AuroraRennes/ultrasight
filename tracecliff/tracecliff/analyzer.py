@@ -13,8 +13,10 @@ from collections import defaultdict
 from dataclasses import dataclass, fields
 from pathlib import Path
 
+from tracecliff.benches import ATOMS_PER_BRANCH
 from tracecliff.exception import SweepCsvError
 from tracecliff.points import bench_for, load_points
+from tracecliff.sweep import FACTOR_FLAGS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = REPO_ROOT / "results"
@@ -23,6 +25,9 @@ ANALYZED_DIR_DEFAULT = RESULTS_DIR / "analyzed_results"
 # Ground truth. edges_total is NOT usable for addr: where the ETM's address
 # cache half-hits it undercounts by 3-10% while atoms stay exact.
 TRUE_METRIC = "atom_elem_sum"
+
+# The dependent variable of every configuration sweep.
+OUTCOME_FIELD = "overflow_count"
 
 # Shortest run whose bytes/atom is trustworthy: below it the fixed trace-enable
 # preamble is a visible fraction of raw_trace_bytes.
@@ -304,6 +309,56 @@ def analyze_file(path, csv_out):
     return bench, points
 
 
+# ---------------------------------------------------------------------------
+# Reference arm
+# ---------------------------------------------------------------------------
+
+# Every factor at its least-invasive level. A point matching this on the factors
+# its CSV actually swept is what the other arms are differenced against.
+REFERENCE_ARMS = {
+    "stall": "off",
+    "etr": "0",
+    "bb": "0",
+    "addrfilter": "etm",
+    "bbfilter": "all",
+}
+# addr_loop n2 s0: 914.8 MB/s, the highest offered rate still returning
+# overflow_count=0, so every factor reads as an increase from zero.
+REFERENCE_BINARY = "bench_n2_s0_i10000000"
+
+
+def is_reference_arms(key, reference):
+    """Is this point at the reference level for every factor the CSV swept?"""
+    arms = dict(key.arms)
+    return all(arms.get(k) == v for k, v in reference.items() if k in arms)
+
+
+def find_reference(points, reference):
+    """The reference point per workload, plus the global one if present."""
+    per_workload = {}
+    for key, point in points.items():
+        if is_reference_arms(key, reference):
+            per_workload.setdefault(key.axes, point)
+    global_ref = next(
+        (p for p in per_workload.values() if p.binary_name == REFERENCE_BINARY), None
+    )
+    return per_workload, global_ref
+
+
+def branches(point):
+    """Executed branches, from the baseline count."""
+    base = point.loss.baseline_edges if point.loss else None
+    if base:
+        return base / ATOMS_PER_BRANCH
+    return point.key.iters
+
+
+def delivered(point):
+    """Fraction of the expected atom stream that arrived, or None."""
+    pct = point.loss.loss_pct if point.loss else None
+    return None if pct is None else 1.0 - pct / 100.0
+
+
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "files",
@@ -346,6 +401,91 @@ def run(args: argparse.Namespace) -> None:
         analyze_file(path, args.csv_out)
 
     print(f"\n{'=' * 78}\nAnalyzed {len(files)} file(s).")
+
+
+def add_arm_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "files",
+        nargs="*",
+        type=Path,
+        help="CSV files to report (default: results/*.csv)",
+    )
+    parser.add_argument(
+        "--per-branch",
+        action="store_true",
+        help="normalise every metric by branches executed, so runs of "
+        "different lengths are comparable",
+    )
+    parser.add_argument(
+        "--reference",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="override one factor's reference level, e.g. "
+        "--reference addrfilter=none. Repeatable; defaults to "
+        + ", ".join(f"{k}={v}" for k, v in REFERENCE_ARMS.items()),
+    )
+
+
+def arms_file(path, per_branch, reference):
+    """One CSV reported per arm, or None where it holds no reportable points."""
+    bench = bench_for(path)
+    if bench is None:
+        print(f"\n{path}: no bench name prefix in the filename, skipping")
+        return None
+    try:
+        points = load_points(path, bench)
+    except SweepCsvError as e:
+        print(f"\n{e}, skipping")
+        return None
+    if not points:
+        print(f"\n{path}: empty, skipping")
+        return None
+    if not any(p.n_ok(OUTCOME_FIELD) for p in points.values()):
+        # Archived pre-qualification CSVs record etr_overflow_count instead, a
+        # column points.py no longer maps, so the outcome is absent entirely.
+        print(f"\n{'=' * 78}\n{path.name}")
+        print(
+            f"SKIPPED: no '{OUTCOME_FIELD}' column. This looks like a "
+            "pre-qualification CSV, whose dependent variable this report "
+            f"cannot show.\n         Read it with: tracecliff analyze {path.as_posix()}"
+        )
+        return None
+
+    attach_losses(points, bench)
+
+    # Imported here: reporter imports back from this module.
+    from tracecliff import reporter
+
+    reporter.report_arms(points, bench, path.name, per_branch, reference)
+    return bench, points
+
+
+def run_arms(args: argparse.Namespace) -> None:
+    reference = dict(REFERENCE_ARMS)
+    for spec in args.reference:
+        field, sep, value = spec.partition("=")
+        if not sep or field not in FACTOR_FLAGS:
+            print(
+                f"ERROR: --reference needs NAME=VALUE with NAME one of: "
+                f"{', '.join(FACTOR_FLAGS)} (got {spec!r})",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        reference[field] = value
+
+    files = _input_files(args)
+    if not files:
+        print(f"ERROR: no CSV files found in {RESULTS_DIR}", file=sys.stderr)
+        sys.exit(1)
+
+    for path in files:
+        if not path.is_file():
+            print(f"ERROR: {path} not found", file=sys.stderr)
+            continue
+        arms_file(path, args.per_branch, reference)
+
+    print(f"\n{'=' * 78}\nReported {len(files)} file(s).")
 
 
 def main(argv: list[str] | None = None) -> None:
