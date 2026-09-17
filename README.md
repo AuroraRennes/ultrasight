@@ -57,7 +57,7 @@ Two separate buffers are in play and they must not be the same one: the ETR drai
 | Buffer | Build default (makefile) | Environment override | CLI |
 | --- | --- | --- | --- |
 | ETR trace sink | `UDMABUF_ETR` (`udmabuf0`) | `ULTRASIGHT_UDMABUF_ETR` | `-u NAME` |
-| fuzzsight bitmap DMA | `UDMABUF_FUZZSIGHT` (`tpiu-doctor0`) | `ULTRASIGHT_UDMABUF_FUZZSIGHT` | — |
+| fuzzsight bitmap DMA | `UDMABUF_FUZZSIGHT` (`udmabuf1`) | `ULTRASIGHT_UDMABUF_FUZZSIGHT` | — |
 
 > *Note:* CLI beats the environment, which beats the build default. All three accept a bare name or a full `/dev/...` path. To change a default at build time:
 > ```

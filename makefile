@@ -84,7 +84,7 @@ OBJS:= \
 # bitmap DMA overwrite the trace. Override from the environment or the command
 # line, or per run with ULTRASIGHT_UDMABUF_ETR / ULTRASIGHT_UDMABUF_FUZZSIGHT.
 UDMABUF_ETR?=udmabuf0
-UDMABUF_FUZZSIGHT?=tpiu-doctor0
+UDMABUF_FUZZSIGHT?=udmabuf1
 
 CFLAGS:= \
 	-std=c11 \
