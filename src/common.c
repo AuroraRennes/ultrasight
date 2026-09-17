@@ -86,6 +86,8 @@ bool fetcher_on = false;
 bool no_trace = false;
 unsigned long etr_ram_addr = 0;
 size_t etr_ram_size = 0;
+/* 0 means "use the board table's value"; -A overrides it for AXICTL sweeps */
+unsigned int etr_axictl_override = 0;
 bool ksight_on = false;
 size_t ksight_ram_addr = 0;
 int range_count = 0;

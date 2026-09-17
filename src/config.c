@@ -33,6 +33,7 @@ const bool cycle_count = false;
 
 extern unsigned long etr_ram_addr;
 extern size_t etr_ram_size;
+extern unsigned int etr_axictl_override;
 extern int registration_verbose;
 extern bool use_etr;
 extern bool use_stm;
@@ -508,7 +509,8 @@ int enable_trace(const struct board *board, struct cs_devices_t *devices)
   /* Setup and enable ETR as the main sink and trace buffer */
   if (use_etr) {
     if (cs_sink_etr_setup(devices->etb, etr_ram_addr, etr_ram_size,
-                          board->etr_axictl) != 0) {
+                          etr_axictl_override ? etr_axictl_override
+                                              : board->etr_axictl) != 0) {
       fprintf(stderr, "[!] Failed to setup ETR\n");
       return -1;
     }
@@ -666,7 +668,8 @@ int enable_trace_sinks_only(const struct board *board, struct cs_devices_t *devi
   if (use_etr) {
     /* Setup and enable ETR as the main sink and trace buffer */
     if (cs_sink_etr_setup(devices->etb, etr_ram_addr, etr_ram_size,
-                        board->etr_axictl) != 0) {
+                        etr_axictl_override ? etr_axictl_override
+                                            : board->etr_axictl) != 0) {
       fprintf(stderr, "[!] Failed to setup ETR\n");
       return -1;
     }

@@ -48,6 +48,7 @@
 #define DEFAULT_CAPTURE_NAME "cstrace.bin"
 extern int registration_verbose;
 extern bool use_etr;
+extern unsigned int etr_axictl_override;
 extern bool use_stm;
 extern bool teardown_etf;
 extern bool single_cpu;
@@ -562,6 +563,10 @@ static void usage(char *argv0)
           ksight_on);
   fprintf(stderr, "  -r, --useetr\t\tuse the ETR sink (in SDRAM), (default %d)\n",
           use_etr);
+  fprintf(stderr,
+          "  -A, --axictl=UINT\t\toverride the board's ETR AXICTL word, 0 keeps "
+          "the board default (default: 0x%x)\n",
+          etr_axictl_override);
   fprintf(stderr, "  -s, --usestm\t\tenable STM/ITM tracing (default %d)\n",
           use_stm);
   fprintf(stderr, "  -t, --teardownetf\t\tdisable ETFs on trace teardown (default %d)\n",
@@ -622,6 +627,7 @@ int main(int argc, char *argv[])
       {"addrfilter", required_argument, NULL, 'F'},
       {"bbfilter", required_argument, NULL, 'B'},
       {"stall", required_argument, NULL, 'S'},
+      {"axictl", required_argument, NULL, 'A'},
       {"help", no_argument, NULL, 'h'},
       {0, 0, 0, 0},
   };
@@ -643,7 +649,7 @@ int main(int argc, char *argv[])
     exit(EXIT_SUCCESS);
   }
   /* Parse CLI elements */
-  while ((opt = getopt_long(argc, argv, "b:c:e:f:u:k:r:s:t:m:a:v:n::o:g:M:F:B:S:h", long_options,
+  while ((opt = getopt_long(argc, argv, "b:c:e:f:u:k:r:s:t:m:a:v:n::o:g:M:F:B:S:A:h", long_options,
                             &option_index)) != -1) {
     switch (opt) {
       /* Board name */
@@ -670,6 +676,10 @@ int main(int argc, char *argv[])
         break;
       case 'r':
         use_etr = atoi(optarg);
+        break;
+      /* Full ETR AXICTL word, e.g. 0xf3e for AXICTL_COMMON|WR_BURST_16 */
+      case 'A':
+        etr_axictl_override = strtoul(optarg, NULL, 0);
         break;
       case 's':
         use_stm = atoi(optarg);
