@@ -17,6 +17,9 @@
 #include <string.h>
 
 #include "csregistration.h"
+#include "csregisters.h"   /* CS_ETB_AXICTL_* for etr_axictl below */
+
+#define AXICTL_COMMON (CS_ETB_AXICTL_PROT_CTL_B1 | CS_ETB_AXICTL_AXCACHE_OS)
 
 static int do_registration_zcu104(struct cs_devices_t *devices)
 {
@@ -222,6 +225,8 @@ const struct board known_boards[] = {
         .do_registration = do_registration_zcu104,
         .n_cpu = 4,
         .hardware = "ZCU-104",
+        /* Without this the setup falls back to WR_BURST_1  */
+        .etr_axictl = AXICTL_COMMON | CS_ETB_AXICTL_WR_BURST_16,
     },
     {
         .do_registration = do_registration_zynq7000,
