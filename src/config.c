@@ -302,8 +302,11 @@ int init_etm(cs_device_t dev)
 
   /* Stall the core instead of overflowing, and disable sync. NOOVERFLOW
    * (bit 13) is not implemented on the A53 ETM (TRCIDR3.NOOVERFLOW=0), only
-   * STALLCTL is: ISTALL with the most invasive LEVEL keeps the trace lossless */
-  v4config.stallcrlr = (1 << 8) | (3 << 2); /* ISTALL, LEVEL=3 */
+   * STALLCTL is: ISTALL with the most invasive LEVEL keeps the trace lossless.
+   * STALL_OFF leaves the ETM free-running, i.e. free to overflow */
+  v4config.stallcrlr = stall_mode == STALL_OFF
+                           ? 0
+                           : (1 << 8) | ((stall_mode - STALL_L0) << 2); /* ISTALL, LEVEL */
   v4config.syncpr = 0;            /* no sync */
   cs_etm_config_put_ex(dev, &v4config);
 

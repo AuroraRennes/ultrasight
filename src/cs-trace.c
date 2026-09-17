@@ -84,6 +84,18 @@ static const char *bb_filter_name(bb_filter_t f)
   return "?";
 }
 
+static const char *stall_mode_name(stall_mode_t m)
+{
+  switch (m) {
+    case STALL_OFF: return "off";
+    case STALL_L0:  return "0";
+    case STALL_L1:  return "1";
+    case STALL_L2:  return "2";
+    case STALL_L3:  return "3";
+  }
+  return "?";
+}
+
 /* CSV stats logging, off by default; set via -o/--csv=PATH. Appends one
  * row per run so a benchmark suite can be run as repeated cs-trace
  * invocations and compared afterwards. */
@@ -309,6 +321,7 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
       printf("[~] Address filter: %s\n", addr_filter_name(addr_filter));
       printf("[~] Branch broadcast: %s\n",
              branch_broadcast ? bb_filter_name(bb_filter) : "off");
+      printf("[~] Core stall: %s\n", stall_mode_name(stall_mode));
       if (addr_filter == ADDR_FILTER_NONE || range_count == 0) {
         if (addr_filter != ADDR_FILTER_NONE)
           fprintf(stderr, "[!] No traced range, the decoder range stays open\n");
@@ -577,6 +590,9 @@ static void usage(char *argv0)
   fprintf(stderr, "  -B, --bbfilter=MODE\t\twhere branch broadcast applies: all, "
                   "out (outside the tracee text) or in (inside it) (default %s)\n",
                   bb_filter_name(bb_filter));
+  fprintf(stderr, "  -S, --stall=LEVEL\t\tcore back-pressure instead of ETM FIFO "
+                  "overflow: off (free-running) or ISTALL level 0-3, 3 being the "
+                  "most invasive (default %s)\n", stall_mode_name(stall_mode));
   fprintf(stderr, "  -h, --help\t\t\tshow this help\n");
 }
 
@@ -605,6 +621,7 @@ int main(int argc, char *argv[])
       {"mode", required_argument, NULL, 'M'},
       {"addrfilter", required_argument, NULL, 'F'},
       {"bbfilter", required_argument, NULL, 'B'},
+      {"stall", required_argument, NULL, 'S'},
       {"help", no_argument, NULL, 'h'},
       {0, 0, 0, 0},
   };
@@ -626,7 +643,7 @@ int main(int argc, char *argv[])
     exit(EXIT_SUCCESS);
   }
   /* Parse CLI elements */
-  while ((opt = getopt_long(argc, argv, "b:c:e:f:u:k:r:s:t:m:a:v:n::o:g:M:F:B:h", long_options,
+  while ((opt = getopt_long(argc, argv, "b:c:e:f:u:k:r:s:t:m:a:v:n::o:g:M:F:B:S:h", long_options,
                             &option_index)) != -1) {
     switch (opt) {
       /* Board name */
@@ -729,6 +746,23 @@ int main(int argc, char *argv[])
         else {
           fprintf(stderr, "[!] Unknown branch broadcast filter '%s' "
                           "(expected all, out or in)\n", optarg);
+          exit(EXIT_FAILURE);
+        }
+        break;
+      case 'S':
+        if (!strcmp(optarg, "off"))
+          stall_mode = STALL_OFF;
+        else if (!strcmp(optarg, "0"))
+          stall_mode = STALL_L0;
+        else if (!strcmp(optarg, "1"))
+          stall_mode = STALL_L1;
+        else if (!strcmp(optarg, "2"))
+          stall_mode = STALL_L2;
+        else if (!strcmp(optarg, "3"))
+          stall_mode = STALL_L3;
+        else {
+          fprintf(stderr, "[!] Unknown stall level '%s' "
+                          "(expected off, 0, 1, 2 or 3)\n", optarg);
           exit(EXIT_FAILURE);
         }
         break;

@@ -25,6 +25,16 @@ extern addr_filter_t addr_filter;
 typedef enum { BB_FILTER_ALL, BB_FILTER_OUT, BB_FILTER_IN } bb_filter_t;
 extern bb_filter_t bb_filter;
 
+/* Whether the ETM back-pressures the core rather than overflowing its FIFO
+ * (TRCSTALLCTLR.ISTALL, with LEVEL selecting how early the stall kicks in):
+ *  - OFF:    free-running ETM, the FIFO overflows and the trace loses packets
+ *  - L0..L3: ISTALL at that LEVEL, 3 being the most invasive and the only one
+ *            that keeps the trace lossless
+ * NOOVERFLOW (bit 13) is not implemented on the A53 ETM
+ * (TRCIDR3.NOOVERFLOW=0), so ISTALL is the whole of the lossless story here. */
+typedef enum { STALL_OFF, STALL_L0, STALL_L1, STALL_L2, STALL_L3 } stall_mode_t;
+extern stall_mode_t stall_mode;
+
 void cs_etb_flush_and_wait_stop(struct cs_devices_t *devices);
 void cs_tpiu_flush_and_wait_stop(struct cs_devices_t *devices);
 int init_etm(cs_device_t dev);
