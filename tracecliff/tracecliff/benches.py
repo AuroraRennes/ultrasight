@@ -127,70 +127,92 @@ def addr_bench(kind: str) -> Bench:
 # call — range-crossing stress (src/bench_call.c)
 # ---------------------------------------------------------------------------
 
-# CALL_EVERY: iterations between successive PLT calls into libc, the INVERSE of
-# crossing density (larger = crossing-sparser). 0 never calls: the control
-# point, same loop and no range crossing.
-CALL_EVERY_LIST = [0, 1, 4, 16, 64]
+# CALL_K: iterations out of every CALL_P that call into libc, the crossing density.
+# 0 never calls (the control point), CALL_P calls on every iteration.
+CALL_P = 16
+CALL_K_LIST = list(range(CALL_P + 1))
+# CALL_LEN: bytes strlen scans per call. 1 is the bare crossing; longer strings
+# run strlen's loop, whose branches broadcast pays for outside the text.
+CALL_LEN_LIST = [1, 64, 256, 1024]
 # ITERS for call binaries only, independent of the addr families' ITERS_LIST.
-CALL_ITERS_LIST = [10_000_000]
+# Multiples of CALL_P, so every point makes exactly ITERS * K / P calls.
+CALL_ITERS_LIST = [1_000_000, 10_000_000, 100_000_000]
 
 CALL_BENCH_SUBDIR = "bin/call"
 
-# TODO: confirm with more captures. Every constant below is fitted on a handful
-# of traces at one ITERS value (10^7) and two addrfilter values; the per-call
-# and unfiltered terms especially need repeats before they are trusted.
-# Atom elements per iteration, fitted on captured traces. The period-64 branch
-# averages out over its 128-iteration cycle, and the countdown over CALL_EVERY:
-# the formula is exact when ITERS is a multiple of both. ITERS also shapes the
-# loop: below 128 the compiler folds the period-64 test into i >= 64, and a
-# limit that fits a 12-bit compare rotates the loop, both changing the count.
-CALL_BASE_ATOMS_PER_ITER = 9  # the period-64 branch and the loop test
-# The countdown test, compiled out when CALL_EVERY is 1 (every iteration calls).
-CALL_COUNTDOWN_ATOMS_PER_ITER = 2
-# One call: BL into the PLT, the PLT's BR out of the text, the TRACE_ON back.
-CALL_ATOMS_PER_CALL = 4
-# Outside the bench loop, one more when the binary calls strlen at all.
-CALL_FIXED_ATOMS = {False: 39, True: 40}
-# addrfilter=none: strlen's own branches in libc, and the loader and libc work
-# outside the text, which binding strlen adds to.
-CALL_UNFILTERED_ATOMS_PER_CALL = 6
-CALL_UNFILTERED_FIXED_ATOMS = {False: 19_116, True: 19_694}
+
+def call_count(call_k: int, iters: int) -> int:
+    """Library calls in one run of bench(): K of every P iterations."""
+    return iters * call_k // CALL_P
+
+
+# Atom elements, exact against every lossless capture. bench() runs twice,
+# warmup then timed, and both are traced.
+CALL_RUNS_TRACED = 2
+# Per iteration of one run: the period-64 branch and its call, the mask test
+# and the loop test.
+CALL_BASE_ATOMS_PER_ITER = 5
+# The period-64 branch's taken direction costs one atom more than the other.
+CALL_TAKEN_EXTRA_ATOMS = 1
+# One call: BL into the PLT and the TRACE_ON back.
+CALL_ATOMS_PER_CALL = 2
+# Outside the bench loop (main's memset and exit path), one more when the
+# binary calls strlen at all.
+CALL_FIXED_ATOMS = {False: 42, True: 43}
+# A CSV without the column ran at cs-trace's default, which traces libc and the
+# loader as addrfilter=none does.
+LIBC_TRACED_ADDRFILTERS = (None, UNFILTERED_ADDRFILTER)
+# Traced libc: the PLT stub and strlen's entry and return on every call...
+CALL_UNFILTERED_ATOMS_PER_CALL = 3
+# ...plus strlen's loop, which depends on CALL_LEN alone.
+CALL_STRLEN_LOOP_ATOMS = {1: 0, 64: 4, 256: 10, 1024: 34}
+# The loader and libc work outside the text, which binding strlen adds to: the
+# mean of the addrfilter=none runs, which move by up to ~80 atoms.
+CALL_UNFILTERED_FIXED_ATOMS = {False: 19_293, True: 19_895}
 
 
 def call_atoms(point: tuple[int, ...], addrfilter: str | None) -> int | None:
-    call_every, iters = point
-    calls = iters // call_every if call_every else 0
-    if addrfilter in TEXT_SCOPED_ADDRFILTERS:
+    call_k, call_len, iters = point
+    calls = call_count(call_k, iters)
+    per_call = CALL_ATOMS_PER_CALL
+    if addrfilter == "etm":
         outside = 0
-    elif addrfilter == UNFILTERED_ADDRFILTER:
-        outside = (
-            calls * CALL_UNFILTERED_ATOMS_PER_CALL
-            + CALL_UNFILTERED_FIXED_ATOMS[call_every > 0]
-        )
+    elif addrfilter in LIBC_TRACED_ADDRFILTERS:
+        if call_len not in CALL_STRLEN_LOOP_ATOMS:
+            return None
+        per_call += CALL_UNFILTERED_ATOMS_PER_CALL + CALL_STRLEN_LOOP_ATOMS[call_len]
+        outside = CALL_UNFILTERED_FIXED_ATOMS[call_k > 0]
     else:
         return None
-    per_iter = CALL_BASE_ATOMS_PER_ITER
-    if call_every > 1:
-        per_iter += CALL_COUNTDOWN_ATOMS_PER_ITER
-    return (
-        iters * per_iter
-        + calls * CALL_ATOMS_PER_CALL
-        + CALL_FIXED_ATOMS[call_every > 0]
-        + outside
+    # (i >> 6) & 1 is true on the upper half of each 128-iteration cycle.
+    full, rest = divmod(iters, 128)
+    taken = full * 64 + max(0, rest - 64)
+    per_run = (
+        iters * CALL_BASE_ATOMS_PER_ITER
+        + taken * CALL_TAKEN_EXTRA_ATOMS
+        + calls * per_call
     )
+    return (
+        CALL_RUNS_TRACED * per_run + CALL_FIXED_ATOMS[call_k > 0] + outside
+    )
+
 
 CALL_BENCH = Bench(
     name="call",
     axes=(
-        Axis("call_every", "c", CALL_EVERY_LIST, make_var="CALL_LIST"),
+        Axis("call_k", "k", CALL_K_LIST, make_var="CALL_K_LIST"),
+        Axis("call_len", "l", CALL_LEN_LIST, make_var="CALL_LEN_LIST"),
         Axis("iters", "iters", CALL_ITERS_LIST, width=10, make_var="CALL_ITERS_LIST"),
     ),
-    binary_name=lambda p: f"bench_call_c{p[0]}_i{p[1]}",
-    # one printed block per CALL_EVERY, i.e. its ITERS row
+    binary_name=lambda p: f"bench_call_k{p[0]}_l{p[1]}_i{p[2]}",
+    # one printed block per CALL_K, i.e. its CALL_LEN x ITERS grid
     group_depth=1,
     expected_atoms=call_atoms,
 )
 
+
+# Build constants that are not sweep axes, emitted into axes.mk alongside them.
+CONSTANT_MAKE_VARS = {"CALL_P": [CALL_P]}
 
 # Every Bench, for the axes emitter.
 ALL_BENCHES = (addr_bench("loop"), addr_bench("chain"), CALL_BENCH)
@@ -203,7 +225,7 @@ ALL_BENCHES = (addr_bench("loop"), addr_bench("chain"), CALL_BENCH)
 
 def make_vars() -> dict[str, list[int]]:
     """Every axis keyed by its Makefile variable name; shared variables must agree."""
-    out: dict[str, list[int]] = {}
+    out: dict[str, list[int]] = dict(CONSTANT_MAKE_VARS)
     for bench in ALL_BENCHES:
         for axis in bench.axes:
             if not axis.make_var:

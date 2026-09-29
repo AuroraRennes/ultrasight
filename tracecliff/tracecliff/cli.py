@@ -54,7 +54,7 @@ def addr_config(args: argparse.Namespace) -> sweep.Config:
 def add_call_arguments(parser: argparse.ArgumentParser) -> None:
     sweep.add_common_arguments(
         parser,
-        bench_dir_help="directory containing bench_call_c*_i* binaries "
+        bench_dir_help="directory containing bench_call_k*_l*_i* binaries "
         "(default: bin/call)",
     )
 

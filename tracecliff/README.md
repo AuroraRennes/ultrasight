@@ -26,7 +26,7 @@ The benchmarks cross-compile for aarch64 Linux (Zynq/ZCU104), override `CROSS` f
 A short session end to end, from a clean checkout to a report:
 
 ```bash
-# 1. build. The full axes are 581 binaries (288 loop, 288 chain, 5 call);
+# 1. build. The full axes are 780 binaries (288 loop, 288 chain, 204 call);
 #    one family is enough to start.
 make call
 
@@ -80,12 +80,13 @@ A loop of indirect calls (`table[i % N_TARGETS]()`) through noinline stub functi
 
 ### 2. `src/bench_call.c` — range-crossing / TRACE_ON stress
 
-A hot loop carrying one period-64 conditional branch per iteration, with one PLT call into libc (`strlen` on a 1-byte string) every `CALL_EVERY` iterations.
+A hot loop carrying one period-64 conditional branch per iteration, with a PLT call into libc (`strlen` on a `CALL_LEN`-byte string) on `CALL_K` of every `CALL_P` = 16 iterations.
 
 | knob | values | effect |
 |---|---|---|
-| `CALL_EVERY` | 0, 1, 4, 16, 64 | iterations between library calls, the *inverse* of crossing density. `0` never calls: same loop, no crossing, the control point. |
-| `ITERS` | 10^7 | iteration count. |
+| `CALL_K` | 0 … 16 | calling iterations out of every 16, spread evenly: the crossing density, linear in steps of 1/16. `0` never calls: same loop, no crossing, the control point. The pattern is a mask read at run time, so the code is identical for every value. |
+| `CALL_LEN` | 1, 64, 256, 1024 | bytes `strlen` scans per call, how long each call stays in libc. `1` is the bare crossing; longer strings run `strlen`'s loop, whose taken branches branch broadcast pays for outside the text. |
+| `ITERS` | 10^6, 10^7, 10^8 | iteration count. |
 
 Two build choices are load-bearing: the binary is **dynamically linked** (no `-static`), so libc is a mapping the ETM range does not cover, and it is built **`-fno-builtin`**, so `strlen` stays a real PLT call instead of being expanded inline. The callee is very simple (and fast!) on purpose, so what is measured is the crossing, not the library's work.
 
@@ -100,7 +101,7 @@ make dump N=64 S=4096 I=1000   # objdump one chain binary
 make clean
 ```
 
-Binaries are named `bench_n<N>_s<S>_i<ITERS>` (loop), `bench_chain_n<N>_s<S>_i<ITERS>` (chain) and `bench_call_c<CALL_EVERY>_i<ITERS>`.
+Binaries are named `bench_n<N>_s<S>_i<ITERS>` (loop), `bench_chain_n<N>_s<S>_i<ITERS>` (chain) and `bench_call_k<CALL_K>_l<CALL_LEN>_i<ITERS>` (call).
 
 The swept values are not written in the Makefile: it includes `axes.mk`, generated from `tracecliff/benches.py` — the same declaration the sweeps iterate over, so the build and the sweep cannot drift apart. `make` regenerates it on its own.
 
@@ -139,28 +140,28 @@ t1:	adr	x11, t2
 t3:	ret             // single return at the far end of the lap
 ```
 
-**`call`** (`bin/call/bench_call_c16_i10000000`) — x19 counts iterations, x20 counts down to the next library call, x21 holds `ITERS`:
+**`call`** (`bin/call/bench_call_k5_l1_i10000000`) — x19 counts iterations, w22 holds the call mask read once from a volatile, x20 holds `ITERS`:
 
 ```asm
- 860:	b	874 <bench+0x44>
- 864:	bl	82c <skip_branch>         // period-64 not-taken path
- 868:	add	x19, x19, #0x1
- 86c:	cmp	x19, x21                  // x21 = 0x989680 = 10,000,000 = ITERS
- 870:	b.eq	8a0 <bench+0x70>
- 874:	subs	x20, x20, #0x1        // countdown to the next call
- 878:	b.ne	894 <bench+0x64>      // not yet -> skip the call
- 87c:	mov	x0, x23
- 880:	bl	690 <strlen@plt>          // the crossing: PLT -> libc, outside the traced range
- 884:	ldr	x1, [x22, #88]
- 888:	add	x0, x0, x1
- 88c:	str	x0, [x22, #88]
- 890:	mov	x20, #0x10                // reload the countdown = CALL_EVERY = 16
- 894:	tbz	w19, #6, 864 <bench+0x34> // the period-64 branch: bit 6 of the counter
- 898:	bl	828 <take_branch>         // taken path
- 89c:	b	868 <bench+0x38>
+ 864:	b	878 <bench+0x48>
+ 868:	bl	82c <skip_branch>         // period-64 not-taken path
+ 86c:	add	x19, x19, #0x1
+ 870:	cmp	x19, x20                  // x20 = 0x989680 = 10,000,000 = ITERS
+ 874:	b.eq	8a4 <bench+0x74>
+ 878:	and	w0, w19, #0xf             // slot i mod CALL_P
+ 87c:	lsr	w0, w22, w0
+ 880:	tbz	w0, #0, 898 <bench+0x68>  // slot not in the mask -> skip the call
+ 884:	mov	x0, x23
+ 888:	bl	690 <strlen@plt>          // the crossing: PLT -> libc, outside the traced range
+ 88c:	ldr	x1, [x21, #96]
+ 890:	add	x0, x0, x1
+ 894:	str	x0, [x21, #96]
+ 898:	tbz	w19, #6, 868 <bench+0x38> // the period-64 branch: bit 6 of the counter
+ 89c:	bl	828 <take_branch>         // taken path
+ 8a0:	b	86c <bench+0x3c>
 ```
 
-At `CALL_EVERY=1` the countdown test at 874/878 is compiled out entirely; at `CALL_EVERY=0` the call and its reload disappear, leaving the same loop with no crossing.
+Every `CALL_K` compiles to these instructions; only the mask differs, so `CALL_K=0` is the same loop with no crossing and `CALL_K=16` crosses on every iteration.
 
 ## Sweeps
 

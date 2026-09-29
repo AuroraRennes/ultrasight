@@ -6,15 +6,15 @@
 #   make                          — build everything (addr_loop, addr_chain, call)
 #   make addr_loop                — build all (N, S) combinations
 #   make addr_chain               — chain-mode equivalent of 'addr_loop'
-#   make call                     — bench_call.c, every CALL_EVERY value
+#   make call                     — bench_call.c, every (CALL_K, CALL_LEN)
 #   make dump N=64 S=4096 I=1000  — disassemble a specific bench_addr binary
 #   make clean
 #
 # Chain mode (bench_chain_nN_sS_iI) replaces the call/return loop with a
 # hand-written asm stub chain (see tracecliff/gen_chain.py)
 #
-# Call mode (bench_call_cC_iI, bench_call.c): a PLT call into libc every
-# CALL_EVERY iterations, the only family whose execution leaves the tracee text.
+# Call mode (bench_call_kK_lL_iI, bench_call.c): a PLT call into libc, strlen
+# over CALL_LEN bytes, on CALL_K of every CALL_P iterations, the only family whose execution leaves the tracee text.
 # Built dynamically linked on purpose, see the header of src/bench_call.c.
 #
 # Parameters (override on command line):
@@ -44,7 +44,9 @@ CALL_SRC := src/bench_call.c
 #                3+ targets = past the ETM exact-match history depth (3 slots)
 #   ADDR_STRIDE_LIST: byte alignment between stub targets, 0 up to one page
 #   ITERS_LIST: iteration counts
-#   CALL_LIST: iterations between library calls (inverse crossing rate)
+#   CALL_K_LIST: calling iterations out of every CALL_P (crossing density)
+#   CALL_P: the period CALL_K counts over
+#   CALL_LEN_LIST: bytes strlen scans per call (time spent in libc)
 #   CALL_ITERS_LIST: iteration counts for the call family
 
 # axes.mk's rule is the first one in this file, it would otherwise become the
@@ -74,7 +76,7 @@ ADDR_LOOP_BINS := $(foreach n,$(ADDR_N_LIST),$(foreach s,$(ADDR_STRIDE_LIST),$(f
 CHAIN_ASMS := $(foreach n,$(ADDR_N_LIST),$(foreach s,$(ADDR_STRIDE_LIST),$(CHAINS_DIR)/chain_n$(n)_s$(s).S))
 ADDR_CHAIN_BINS := $(foreach n,$(ADDR_N_LIST),$(foreach s,$(ADDR_STRIDE_LIST),$(foreach i,$(ITERS_LIST),$(ADDR_CHAIN_DIR)/bench_chain_n$(n)_s$(s)_i$(i))))
 
-CALL_BINS := $(foreach c,$(CALL_LIST),$(foreach i,$(CALL_ITERS_LIST),$(CALL_DIR)/bench_call_c$(c)_i$(i)))
+CALL_BINS := $(foreach k,$(CALL_K_LIST),$(foreach l,$(CALL_LEN_LIST),$(foreach i,$(CALL_ITERS_LIST),$(CALL_DIR)/bench_call_k$(k)_l$(l)_i$(i))))
 
 .PHONY: all addr_loop addr_chain call dump clean
 
@@ -117,16 +119,17 @@ endef
 
 $(foreach n,$(ADDR_N_LIST),$(foreach s,$(ADDR_STRIDE_LIST),$(foreach i,$(ITERS_LIST),$(eval $(call CHAIN_BUILD_RULE,$(n),$(s),$(i),$(ADDR_CHAIN_DIR))))))
 
-# Generated rule for each call-mode (CALL_EVERY, ITERS) pair. No -static: the
+# Generated rule for each call-mode (CALL_K, CALL_LEN, ITERS) triple. No -static: the
 # callee has to sit in a mapping the ETM range does not cover. -fno-builtin
 # keeps strlen a real PLT call rather than an inline expansion.
 define CALL_BUILD_RULE
-$(CALL_DIR)/bench_call_c$(1)_i$(2): $(CALL_SRC) | $(CALL_DIR)
-	$(CC) $(CFLAGS) -fno-builtin -DCALL_EVERY=$(1) -DITERS=$(2) $$< $(LDFLAGS) -o $$@
+$(CALL_DIR)/bench_call_k$(1)_l$(2)_i$(3): $(CALL_SRC) | $(CALL_DIR)
+	$(CC) $(CFLAGS) -fno-builtin -DCALL_K=$(1) -DCALL_P=$(CALL_P) -DCALL_LEN=$(2) -DITERS=$(3) $$< $(LDFLAGS) -o $$@
 
 endef
 
-$(foreach c,$(CALL_LIST),$(foreach i,$(CALL_ITERS_LIST),$(eval $(call CALL_BUILD_RULE,$(c),$(i)))))
+$(foreach k,$(CALL_K_LIST),$(foreach l,$(CALL_LEN_LIST),$(foreach i,$(CALL_ITERS_LIST),$(eval $(call CALL_BUILD_RULE,$(k),$(l),$(i))))))
+
 
 # Disassemble a specific binary
 N ?= 64
