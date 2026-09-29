@@ -28,6 +28,12 @@ Factors:
     bbfilter --bbfilter
             where branch broadcast applies: all, or in (inside the tracee
             text only)
+    axictl  --axictl
+            full ETR AXICTL word, e.g. 0xf3e for PROT_CTL_B1|AXCACHE_OS|WR_BURST_16;
+            the burst length is AXICTL[11:8] + 1 (0x03e, 0x13e, 0x33e, 0x73e, 0xf3e)
+    udmabuf --udmabuf
+            u-dma-buf device the ETR drains into, e.g. udmabuf0; the buffers differ
+            in size and placement
 """
 
 import argparse
@@ -80,6 +86,8 @@ FACTOR_FLAGS = {
     "stall": "--stall",
     "addrfilter": "--addrfilter",
     "bbfilter": "--bbfilter",
+    "axictl": "--axictl",
+    "udmabuf": "--udmabuf",
 }
 
 # What a sweep varies if it says nothing
