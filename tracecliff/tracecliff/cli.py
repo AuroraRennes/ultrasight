@@ -55,11 +55,21 @@ def add_call_arguments(parser: argparse.ArgumentParser) -> None:
     sweep.add_common_arguments(
         parser,
         bench_dir_help="directory containing bench_call_k*_l*_i* binaries "
-        "(default: bin/call)",
+        "(default: bin/call, or bin/call_fill with --fill)",
+    )
+    parser.add_argument(
+        "--fill",
+        action="store_true",
+        help="sweep the call_fill family (bench_call_fill_k*_i*): CALL_LEN=1 "
+        "with a branch-free filler per iteration",
     )
 
 
 def call_config(args: argparse.Namespace) -> sweep.Config:
+    if getattr(args, "fill", False):
+        return sweep.config_from_args(
+            args, benches.CALL_FILL_BENCH, benches.CALL_FILL_BENCH_SUBDIR
+        )
     return sweep.config_from_args(args, benches.CALL_BENCH, benches.CALL_BENCH_SUBDIR)
 
 

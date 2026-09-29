@@ -7,7 +7,7 @@
  * conditional branch per iteration, with a PLT call into libc on CALL_K of
  * every CALL_P iterations, effectively going in and out of map_info[0]
  *
- * Three knobs control program generation:
+ * Four knobs control program generation:
  *   CALL_K : iterations out of every CALL_P that call into libc, spread as
  *            evenly as the period allows. 0 = never call (the control point:
  *            same loop, no range crossing at all), CALL_P = a crossing every
@@ -18,6 +18,10 @@
  *            stays in libc. strlen's loop takes a direct backward branch per
  *            chunk it scans, the branches broadcast pays for outside the text;
  *            1 has none, so the crossing is all there is.
+ *   CALL_FILL : dependent adds per iteration, straight-line code with no
+ *            branch, so it costs cycles and no trace. It lowers the loop's
+ *            own trace rate without changing its packets, placing the
+ *            no-call control under the sink's ceiling. 0 = none.
  *
  * The code is the same for every CALL_K: the pattern is a mask read from a
  * volatile at run time and tested on every iteration, so the compiler cannot
@@ -35,6 +39,7 @@
  *
  * Usage:
  *   ./bench_call_kK_lL_iI   (built with CALL_K=K, CALL_LEN=L, ITERS=I)
+ *   ./bench_call_fill_kK_iI (built with CALL_FILL, CALL_K=K, CALL_LEN=1, ITERS=I)
  */
 
 #include <stdint.h>
@@ -57,6 +62,13 @@
 #ifndef ITERS
 #define ITERS 100000
 #endif
+
+#ifndef CALL_FILL
+#define CALL_FILL 0
+#endif
+
+#define STR_(x) #x
+#define STR(x) STR_(x)
 
 #if CALL_P > 32 || (CALL_P & (CALL_P - 1)) != 0
 #error "CALL_P must be a power of two no larger than 32"
@@ -91,8 +103,17 @@ __attribute__((optimize("O1")))
 static void bench(void)
 {
     uint32_t mask = call_mask;
+#if CALL_FILL > 0
+    uint64_t fill = 0;
+#endif
 
     for (unsigned long i = 0; i < (unsigned long)ITERS; i++) {
+
+#if CALL_FILL > 0
+        /* A dependency chain the core cannot overlap: cycles, no branch */
+        asm volatile(".rept " STR(CALL_FILL) "\n\tadd %0, %0, #1\n\t.endr"
+                     : "+r"(fill));
+#endif
 
         if ((mask >> (i & (CALL_P - 1))) & 1) {
             /* The range crossing: out through the PLT into libc and back */
@@ -110,6 +131,9 @@ static void bench(void)
             skip_branch();
         }
     }
+#if CALL_FILL > 0
+    sink += fill;
+#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -141,8 +165,8 @@ int main(void)
     double   br_per_s   = (double)ITERS / elapsed_s;
     double   calls      = (double)ITERS * CALL_K / CALL_P;
 
-    printf("call_k=%-3d  call_p=%-3d  call_len=%-5d  iters=%d\n",
-           CALL_K, CALL_P, CALL_LEN, ITERS);
+    printf("call_k=%-3d  call_p=%-3d  call_len=%-5d  call_fill=%-3d  iters=%d\n",
+           CALL_K, CALL_P, CALL_LEN, CALL_FILL, ITERS);
     printf("elapsed=%.6f s  branches/s=%.0f\n", elapsed_s, br_per_s);
     printf("crossings=%.0f  crossings/s=%.0f\n", calls, calls / elapsed_s);
 

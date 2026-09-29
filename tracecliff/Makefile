@@ -48,6 +48,8 @@ CALL_SRC := src/bench_call.c
 #   CALL_P: the period CALL_K counts over
 #   CALL_LEN_LIST: bytes strlen scans per call (time spent in libc)
 #   CALL_ITERS_LIST: iteration counts for the call family
+#   CALL_FILL: branch-free adds per iteration (call_fill family, CALL_LEN=1)
+#   CALL_FILL_ITERS_LIST: iteration counts for the call_fill family
 
 # axes.mk's rule is the first one in this file, it would otherwise become the
 # default goal and bare 'make' would build nothing else.
@@ -65,8 +67,9 @@ BINDIR           := bin
 ADDR_LOOP_DIR    := $(BINDIR)/addr_loop
 ADDR_CHAIN_DIR   := $(BINDIR)/addr_chain
 CALL_DIR         := $(BINDIR)/call
+CALL_FILL_DIR    := $(BINDIR)/call_fill
 
-BIN_DIRS := $(ADDR_LOOP_DIR) $(ADDR_CHAIN_DIR) $(CALL_DIR)
+BIN_DIRS := $(ADDR_LOOP_DIR) $(ADDR_CHAIN_DIR) $(CALL_DIR) $(CALL_FILL_DIR)
 
 # Generated chain-mode stub assembly (see gen_chain.py)
 CHAINS_DIR := chains
@@ -77,10 +80,11 @@ CHAIN_ASMS := $(foreach n,$(ADDR_N_LIST),$(foreach s,$(ADDR_STRIDE_LIST),$(CHAIN
 ADDR_CHAIN_BINS := $(foreach n,$(ADDR_N_LIST),$(foreach s,$(ADDR_STRIDE_LIST),$(foreach i,$(ITERS_LIST),$(ADDR_CHAIN_DIR)/bench_chain_n$(n)_s$(s)_i$(i))))
 
 CALL_BINS := $(foreach k,$(CALL_K_LIST),$(foreach l,$(CALL_LEN_LIST),$(foreach i,$(CALL_ITERS_LIST),$(CALL_DIR)/bench_call_k$(k)_l$(l)_i$(i))))
+CALL_FILL_BINS := $(foreach k,$(CALL_K_LIST),$(foreach i,$(CALL_FILL_ITERS_LIST),$(CALL_FILL_DIR)/bench_call_fill_k$(k)_i$(i)))
 
-.PHONY: all addr_loop addr_chain call dump clean
+.PHONY: all addr_loop addr_chain call call_fill dump clean
 
-all: addr_loop addr_chain call
+all: addr_loop addr_chain call call_fill
 
 # Directory creation
 $(BIN_DIRS) $(CHAINS_DIR):
@@ -91,6 +95,8 @@ addr_loop: $(ADDR_LOOP_BINS)
 addr_chain: $(ADDR_CHAIN_BINS)
 
 call: $(CALL_BINS)
+
+call_fill: $(CALL_FILL_BINS)
 
 # Generated rule for each (N, S, I) triple, $(4) is the output directory
 define BUILD_RULE
@@ -130,6 +136,14 @@ endef
 
 $(foreach k,$(CALL_K_LIST),$(foreach l,$(CALL_LEN_LIST),$(foreach i,$(CALL_ITERS_LIST),$(eval $(call CALL_BUILD_RULE,$(k),$(l),$(i))))))
 
+# The call rule at CALL_LEN=1 with CALL_FILL branch-free adds per iteration.
+define CALL_FILL_BUILD_RULE
+$(CALL_FILL_DIR)/bench_call_fill_k$(1)_i$(2): $(CALL_SRC) | $(CALL_FILL_DIR)
+	$(CC) $(CFLAGS) -fno-builtin -DCALL_FILL=$(CALL_FILL) -DCALL_K=$(1) -DCALL_P=$(CALL_P) -DCALL_LEN=1 -DITERS=$(2) $$< $(LDFLAGS) -o $$@
+
+endef
+
+$(foreach k,$(CALL_K_LIST),$(foreach i,$(CALL_FILL_ITERS_LIST),$(eval $(call CALL_FILL_BUILD_RULE,$(k),$(i)))))
 
 # Disassemble a specific binary
 N ?= 64

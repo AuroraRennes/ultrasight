@@ -26,7 +26,7 @@ The benchmarks cross-compile for aarch64 Linux (Zynq/ZCU104), override `CROSS` f
 A short session end to end, from a clean checkout to a report:
 
 ```bash
-# 1. build. The full axes are 780 binaries (288 loop, 288 chain, 204 call);
+# 1. build. The full axes are 797 binaries (288 loop, 288 chain, 204 call, 17 call_fill);
 #    one family is enough to start.
 make call
 
@@ -88,6 +88,8 @@ A hot loop carrying one period-64 conditional branch per iteration, with a PLT c
 | `CALL_LEN` | 1, 64, 256, 1024 | bytes `strlen` scans per call, how long each call stays in libc. `1` is the bare crossing; longer strings run `strlen`'s loop, whose taken branches branch broadcast pays for outside the text. |
 | `ITERS` | 10^6, 10^7, 10^8 | iteration count. |
 
+**call_fill** (`bin/call_fill/`) is the same source at `CALL_LEN=1` with `CALL_FILL` = 24 dependent adds per iteration: branch-free, so it costs cycles and no trace, bringing the no-call control under the sink ceiling at bb=1. Swept with `sweep-call --fill`, at 10^7 iterations.
+
 Two build choices are load-bearing: the binary is **dynamically linked** (no `-static`), so libc is a mapping the ETM range does not cover, and it is built **`-fno-builtin`**, so `strlen` stays a real PLT call instead of being expanded inline. The callee is very simple (and fast!) on purpose, so what is measured is the crossing, not the library's work.
 
 ### Building
@@ -101,7 +103,7 @@ make dump N=64 S=4096 I=1000   # objdump one chain binary
 make clean
 ```
 
-Binaries are named `bench_n<N>_s<S>_i<ITERS>` (loop), `bench_chain_n<N>_s<S>_i<ITERS>` (chain) and `bench_call_k<CALL_K>_l<CALL_LEN>_i<ITERS>` (call).
+Binaries are named `bench_n<N>_s<S>_i<ITERS>` (loop), `bench_chain_n<N>_s<S>_i<ITERS>` (chain), `bench_call_k<CALL_K>_l<CALL_LEN>_i<ITERS>` (call) and `bench_call_fill_k<CALL_K>_i<ITERS>` (call_fill).
 
 The swept values are not written in the Makefile: it includes `axes.mk`, generated from `tracecliff/benches.py` — the same declaration the sweeps iterate over, so the build and the sweep cannot drift apart. `make` regenerates it on its own.
 

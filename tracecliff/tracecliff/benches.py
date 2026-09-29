@@ -211,11 +211,43 @@ CALL_BENCH = Bench(
 )
 
 
+# ---------------------------------------------------------------------------
+# call_fill — bench_call at CALL_LEN=1 with a branch-free filler per iteration
+# ---------------------------------------------------------------------------
+
+# CALL_FILL: dependent adds per iteration (~0.83 ns each, no trace), placing the
+# no-call control near 415 MB/s at bb=1, under both ceilings.
+CALL_FILL = 24
+CALL_FILL_ITERS_LIST = [10_000_000]
+
+CALL_FILL_BENCH_SUBDIR = "bin/call_fill"
+
+
+def call_fill_atoms(point: tuple[int, ...], addrfilter: str | None) -> int | None:
+    """The filler has no branch, so the count is bench_call's at CALL_LEN=1."""
+    call_k, iters = point
+    return call_atoms((call_k, 1, iters), addrfilter)
+
+
+CALL_FILL_BENCH = Bench(
+    name="call_fill",
+    axes=(
+        Axis("call_k", "k", CALL_K_LIST, make_var="CALL_K_LIST"),
+        Axis(
+            "iters", "iters", CALL_FILL_ITERS_LIST, width=10,
+            make_var="CALL_FILL_ITERS_LIST",
+        ),
+    ),
+    binary_name=lambda p: f"bench_call_fill_k{p[0]}_i{p[1]}",
+    group_depth=0,
+    expected_atoms=call_fill_atoms,
+)
+
 # Build constants that are not sweep axes, emitted into axes.mk alongside them.
-CONSTANT_MAKE_VARS = {"CALL_P": [CALL_P]}
+CONSTANT_MAKE_VARS = {"CALL_P": [CALL_P], "CALL_FILL": [CALL_FILL]}
 
 # Every Bench, for the axes emitter.
-ALL_BENCHES = (addr_bench("loop"), addr_bench("chain"), CALL_BENCH)
+ALL_BENCHES = (addr_bench("loop"), addr_bench("chain"), CALL_BENCH, CALL_FILL_BENCH)
 
 
 # ---------------------------------------------------------------------------
