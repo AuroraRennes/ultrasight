@@ -21,12 +21,24 @@ from tracecliff.sweep import Axis, Bench
 # N_TARGETS: 1 target = baseline (same address every call, best compression);
 #            3+ targets is past the ETM's 3-slot exact-match address history,
 #            forcing a real address packet on every call.
-ADDR_N_LIST = [1, 2, 3, 4, 8, 16, 32, 64]
-# STUB_STRIDE: byte spacing between stub targets, 0 (compiler packing) to a page.
-ADDR_STRIDE_LIST = [0, 64, 128, 256, 512, 1024, 2048, 4096]
-# ITERS: run length, swept to find the shortest run that is in steady state,
-# with and without ETR.
-ITERS_LIST = [100_000, 1_000_000, 10_000_000, 100_000_000]
+# 5, 6 and 7 fill the knee's rate hole (nothing sampled between 570 and
+# 746 MB/s), their predictor behaviour lying between N=4's and N=8's.
+ADDR_N_LIST = [1, 2, 3, 4, 5, 6, 7, 8, 16]
+# STUB_STRIDE: byte spacing between stubs, 0 (compiler packing) or a power of two
+# (.balign). It only turns short address packets into Long ones, saturated by 512.
+ADDR_STRIDE_LIST = [0, 128, 256, 512]
+# ITERS: run length, swept over seven decades to find the shortest run in
+# steady state, with and without ETR.
+ITERS_LIST = [
+    100,
+    1_000,
+    10_000,
+    100_000,
+    1_000_000,
+    10_000_000,
+    100_000_000,
+    1_000_000_000,
+]
 
 # Two build modes of the same source, differing only in binary name.
 ADDR_BENCH_SUBDIR = {"loop": "bin/addr_loop", "chain": "bin/addr_chain"}
