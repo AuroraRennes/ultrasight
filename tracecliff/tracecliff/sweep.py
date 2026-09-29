@@ -22,10 +22,12 @@ Factors:
             off, or the ISTALL FIFO level at which the ETM stalls the core
     addrfilter --addrfilter
             where the tracee text range is enforced: etm (ETM address
-            comparators), pl (decoder, the ETM traces all of EL0) or none
+            comparators) or none (the ETM traces all of EL0). cs-trace's pl
+            configures the ETM exactly as none and leaves the filtering to the
+            PL downstream, so it is not a separate level
     bbfilter --bbfilter
-            where branch broadcast applies: all, in (inside the tracee text)
-            or out (outside it)
+            where branch broadcast applies: all, or in (inside the tracee
+            text only)
 """
 
 import argparse
@@ -438,6 +440,8 @@ def factors_from_args(args: argparse.Namespace) -> dict[str, list[str]]:
                 f"unknown factor {field!r} (expected one of: {', '.join(FACTOR_FLAGS)})"
             )
         factors[field] = [v for v in values.split(",") if v]
+        if field == "addrfilter" and "pl" in factors[field]:
+            die("addrfilter=pl traces what addrfilter=none does; sweep none")
         if not factors[field]:
             die(f"--factor {field} has no values")
 

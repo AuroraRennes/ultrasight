@@ -33,8 +33,9 @@ ADDR_BENCH_SUBDIR = {"loop": "bin/addr_loop", "chain": "bin/addr_chain"}
 ADDR_BIN_PREFIX = {"loop": "bench", "chain": "bench_chain"}
 
 # addrfilter values whose trace holds the tracee text alone, the scope every
-# formula below counts first. None is a CSV without the column, cs-trace's pl.
-TEXT_SCOPED_ADDRFILTERS = (None, "pl", "etm")
+# formula below counts first. None is a CSV without the column: the addr
+# families never leave the text, so their count is the same.
+TEXT_SCOPED_ADDRFILTERS = (None, "etm")
 # With addrfilter=none the loader, libc startup and exit are traced too: a fixed
 # amount on top of the text count, the mean of captured runs, which scatter by
 # about +-40 around it.
