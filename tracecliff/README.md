@@ -47,7 +47,26 @@ The two readers share one per-point model and one baseline, and differ in what e
 
 Both carry the same guard: back-pressure relocates loss rather than removing it, so `delivered` — the share of the expected stream that arrived — is reported next to `overflow_count`. A config with `overflow_count=0` and a collapsed `delivered` has not been fixed, it moved its losses where the dependent variable cannot see them. `etr=1` delivers ~0.05 of the stream.
 
-**Check the APU clock before trusting any run.** `cpufreq` is not a witness — `scaling_cur_freq` reports 1199999 while the core runs at 598 MHz, because the clock driver does not apply APLL's DIV2 bit. `cpuinfo_cur_freq` is root-only and honest. Every offered rate scales with the clock.
+**Check the APU clock before trusting any run.** Every offered rate scales with the clock. The FSBL boots the core at 1200 MHz, but on the stock ZCU104 device tree any cpufreq write drops it to 600: the CPU OPPs are the exact APLL rates (33,333,333 Hz x 72 / 2 = 1,199,999,988 Hz), cpufreq requests them in whole kHz (`1199999 * 1000`, just below), and the ZynqMP divider rounds down to the next step. Every OPP lands one step low, while `scaling_cur_freq` still echoes 1199999. The fix is whole-MHz OPPs in `system-user.dtsi`:
+
+```dts
+&cpu_opp_table {
+	opp00 { opp-hz = /bits/ 64 <1200000000>; };
+	opp01 { opp-hz = /bits/ 64 <600000000>; };
+	opp02 { opp-hz = /bits/ 64 <400000000>; };
+	opp03 { opp-hz = /bits/ 64 <300000000>; };
+};
+```
+
+With that table, `scaling_cur_freq` is honest: it reads 1200000 on a 1200 MHz core, and 600000 after a write of 600000 (checked against the cycle counter on both). `scripts/check_clock.sh` accepts exactly 1200000 and exits 0. Anything else, 1199999 included, means the stock table, and the script reads `ACPU_CTRL` and `APLL_CTRL` instead, asking for `sudo` if it is not root, and fails unless the core is on APLL at about 1200 MHz. On an unpatched board, `sudo busybox devmem 0xFD1A0060 w 0x03000100` (`ACPU_CTRL`: APLL, `DIVISOR0=1`) restores 1200 MHz until the next cpufreq write, and the sysfs files then misreport it.
+
+To measure the clock yourself, from the cycle counter and needing no root:
+
+```bash
+taskset -c 0 perf stat -e cycles:u,task-clock:u -- awk 'BEGIN{for(i=0;i<30000000;i++);}'
+```
+
+At 1200 MHz this takes about 11.4 s (13,683,286,740 cycles / 11.40318 s = 1200.0 MHz); at 600 MHz about 22.8 s. Prefer `task-clock` to wall-clock elapsed, which scheduling overhead drags a little low.
 
 ## CoreSight ETM
 
