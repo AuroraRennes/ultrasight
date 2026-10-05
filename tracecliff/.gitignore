@@ -4,6 +4,7 @@ chains/*
 !chains/README.md
 results/*
 !results/README.md
+storage/
 
 axes.mk
 cstrace.bin
