@@ -1,0 +1,15 @@
+bin/*
+!bin/README.md
+chains/*
+!chains/README.md
+plots/*
+!plots/README.md
+results/*
+!results/README.md
+
+axes.mk
+cstrace.bin
+
+__pycache__/
+.venv/
+storage/
