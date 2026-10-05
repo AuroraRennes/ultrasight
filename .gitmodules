@@ -2,6 +2,3 @@
 	path = csal
 	url = git@github.com:AuroraRennes/CSAL.git
 	branch = master
-[submodule "tracecliff"]
-	path = tracecliff
-	url = git@github.com:AuroraRennes/tracecliff.git
