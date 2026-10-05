@@ -9,6 +9,7 @@ Subcommands:
     gen-chain        emit chain-mode stub assembly for bench_addr.c's chain mode
     analyze          read sweep CSVs back and report loss%
     micro            report each sweep point as a difference from the reference point
+    plot             draw the campaign figures from sweep CSVs
     axes             print the sweep axes (--make: as Make variables, for axes.mk)
     run-all          run sweep-addr (kind=loop, kind=chain) then sweep-call
                      sequentially, sharing cs-trace/cs-flags/runs and the
@@ -26,7 +27,7 @@ import argparse
 import shlex
 from pathlib import Path
 
-from tracecliff import analyzer, benches, gen_chain, sweep
+from tracecliff import analyzer, benches, gen_chain, plotter, sweep
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -179,6 +180,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analyzer.add_arm_arguments(p)
     p.set_defaults(func=analyzer.run_arms)
+
+    p = subparsers.add_parser(
+        "plot",
+        help="draw the campaign figures from sweep CSVs",
+        description="Draw the campaign figures into plots/. Every CSV is "
+        "pooled into one point set, so a figure can span files. Needs matplotlib.\n\n"
+        "Example:\n"
+        "    python3 -m tracecliff plot cliff corpus",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    plotter.add_arguments(p)
+    p.set_defaults(func=plotter.run)
 
     p = subparsers.add_parser(
         "axes",

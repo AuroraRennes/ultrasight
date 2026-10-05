@@ -9,6 +9,7 @@ The Python driver and analysis code, run from the repo root (see the top-level `
 | `axes` | `benches.py` | prints the sweep axes; `--make` emits them as Make variables (see below) |
 | `analyze` | `points.py` + `analyzer.py` + `reporter.py` | reads CSVs back from `../results/` and produces the text report and `--csv-out` summaries |
 | `micro` | `analyzer.py` + `reporter.py` | reads CSVs back from `../results/` and prints each point as a difference from its workload's reference arm (`--per-branch`, `--reference NAME=VALUE`) |
+| `plot` | `plotter.py` + `analyzer.py` | pools the bb=1 `addr_*` and `call_fill` CSVs of `../results/` (or `--csv FILE...`) and draws the campaign figures into `../plots/`; needs matplotlib (`cliff filters corpus`, default all) |
 | `gen-chain` | `gen_chain.py` | generates the chain-mode stub assembly in `../chains/`, invoked automatically by the Makefile |
 | `run-all` | (in `cli.py`) | runs `sweep-addr` (loop, chain) then `sweep-call` sequentially, sharing `--cs-trace`/`--cs-flags`/`--runs` and the swept factors |
 

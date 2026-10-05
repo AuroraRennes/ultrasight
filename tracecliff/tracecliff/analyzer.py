@@ -427,8 +427,9 @@ def add_arm_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def arms_file(path, per_branch, reference):
-    """One CSV reported per arm, or None where it holds no reportable points."""
+def load_arms(path):
+    """One CSV as (bench, points) with losses attached, or None where it holds
+    no reportable points."""
     bench = bench_for(path)
     if bench is None:
         print(f"\n{path}: no bench name prefix in the filename, skipping")
@@ -453,12 +454,19 @@ def arms_file(path, per_branch, reference):
         return None
 
     attach_losses(points, bench)
+    return bench, points
 
+
+def arms_file(path, per_branch, reference):
+    """One CSV reported per arm; nothing where it holds no reportable points."""
+    loaded = load_arms(path)
+    if loaded is None:
+        return
+    bench, points = loaded
     # Imported here: reporter imports back from this module.
     from tracecliff import reporter
 
     reporter.report_arms(points, bench, path.name, per_branch, reference)
-    return bench, points
 
 
 def run_arms(args: argparse.Namespace) -> None:
