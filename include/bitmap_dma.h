@@ -49,6 +49,7 @@ typedef struct {
     axi_regs_t      dma;
     axi_regs_t      reader;
     int             udmabuf_fd;
+    int             sync_fd;     /* sysfs sync_for_cpu, -1 when mapped uncached */
     unsigned long   dst_addr;
     void           *buf;
     size_t          buf_size;

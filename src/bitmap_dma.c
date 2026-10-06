@@ -56,6 +56,37 @@ int udmabuf_sysfs_info(const char *name, unsigned long *phys_addr,
     return 0;
 }
 
+/* Write a string to a u-dma-buf sysfs attribute */
+static int udmabuf_sysfs_write(const char *name, const char *attr,
+                               const char *val)
+{
+    char path[256];
+    snprintf(path, sizeof(path), "/sys/class/u-dma-buf/%s/%s", name, attr);
+
+    int fd = open(path, O_WRONLY);
+    if (fd < 0) return -1;
+    ssize_t n = write(fd, val, strlen(val));
+    close(fd);
+    return n < 0 ? -1 : 0;
+}
+
+/* Configure the driver to sync [0, size) DMA_FROM_DEVICE and return an fd
+ * that invalidates that range when written to, or -1 on failure. */
+static int udmabuf_sync_open(const char *name, size_t size)
+{
+    char val[32];
+    snprintf(val, sizeof(val), "%zu", size);
+
+    if (udmabuf_sysfs_write(name, "sync_offset", "0") < 0 ||
+        udmabuf_sysfs_write(name, "sync_size", val) < 0 ||
+        udmabuf_sysfs_write(name, "sync_direction", "2") < 0)  /* DMA_FROM_DEVICE */
+        return -1;
+
+    char path[256];
+    snprintf(path, sizeof(path), "/sys/class/u-dma-buf/%s/sync_for_cpu", name);
+    return open(path, O_WRONLY);
+}
+
 int bitmap_dma_open(bitmap_dma_t *h, size_t bitmap_size)
 {
     h->buf_size = bitmap_size;
@@ -101,7 +132,16 @@ int bitmap_dma_open(bitmap_dma_t *h, size_t bitmap_size)
     // Map udmabuf as destination
     char udmabuf_dev[256];
     snprintf(udmabuf_dev, sizeof(udmabuf_dev), "/dev/%s", udmabuf_name);
-    h->udmabuf_fd = open(udmabuf_dev, O_RDWR | O_SYNC);
+    /* Map cached and invalidate by hand after each transfer: reading the
+     * 64 KiB bitmap through an O_SYNC (uncached) mapping costs ~350 us.
+     * ULTRASIGHT_BITMAP_UNCACHED=1 restores the uncached mapping. */
+    int uncached = getenv("ULTRASIGHT_BITMAP_UNCACHED") != NULL;
+    h->sync_fd = uncached ? -1 : udmabuf_sync_open(udmabuf_name, bitmap_size);
+    if (!uncached && h->sync_fd < 0) {
+        fprintf(stderr, "[~] bitmap_dma: cannot set up cached mapping, using O_SYNC\n");
+        uncached = 1;
+    }
+    h->udmabuf_fd = open(udmabuf_dev, uncached ? (O_RDWR | O_SYNC) : O_RDWR);
     if (h->udmabuf_fd < 0) {
         perror("open udmabuf");
         axi_regs_close(&h->dma);
@@ -133,6 +173,7 @@ void bitmap_dma_close(bitmap_dma_t *h)
 {
     munmap(h->buf, h->buf_size);
     close(h->udmabuf_fd);
+    if (h->sync_fd >= 0) close(h->sync_fd);
     axi_regs_close(&h->dma);
     axi_regs_close(&h->reader);
 }
@@ -163,6 +204,10 @@ int bitmap_dma_transfer(bitmap_dma_t *h)
     // Rearm S2MM for next transfer
     axi_regs_write(&h->dma, S2MM_DST_ADDRESS_REGISTER, h->dst_addr);
     axi_regs_write(&h->dma, S2MM_CONTROL_REGISTER, RUN_DMA | ENABLE_ALL_IRQ);
+
+    // Invalidate the CPU cache over the bitmap before it is read
+    if (h->sync_fd >= 0 && write(h->sync_fd, "1", 1) < 0)
+        perror("sync_for_cpu");
 
     return 0;
 }
