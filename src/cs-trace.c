@@ -104,20 +104,19 @@ static char *stats_csv_path = NULL;
 
 /* Edge-hash mode selected on the command line. cs-trace sets this explicitly
  * rather than inheriting edge_extractor's reset default, so a change to that
- * default cannot silently alter what a sweep measures. STALKER matches the
- * hardware default and every sweep taken so far; fuzzsight-proxy selects
- * FUZZSIGHT. The mode only decides which index an edge maps to -- edge counts
- * are identical across modes -- but it is recorded in the CSV so a result set
- * says which one produced it. */
-static edge_hash_mode_t edge_hash_mode = EDGE_HASH_STALKER;
+ * default cannot silently alter what a sweep measures. CRC32 matches the
+ * hardware default and what fuzzsight-proxy selects; NONE passes the raw
+ * address through for debug. The mode only decides which index an edge maps
+ * to -- edge counts are identical across modes -- but it is recorded in the
+ * CSV so a result set says which one produced it. */
+static edge_hash_mode_t edge_hash_mode = EDGE_HASH_CRC32;
 
 static const char *edge_hash_mode_name(edge_hash_mode_t m)
 {
   switch (m) {
-    case EDGE_HASH_NONE:      return "none";
-    case EDGE_HASH_FUZZSIGHT: return "fuzzsight";
-    case EDGE_HASH_STALKER:   return "stalker";
-    default:                  return "unknown";
+    case EDGE_HASH_NONE:  return "none";
+    case EDGE_HASH_CRC32: return "crc32";
+    default:              return "unknown";
   }
 }
 
@@ -293,6 +292,11 @@ void parent(pid_t pid, int *child_status, const char *binary_name)
         ret = edge_extractor_open(&edge_handle);
         if (ret < 0) perror("[!] EDGE AXI stats mapping issue");
         /* Select the hash mode */
+        if (!edge_extractor_has_crc32_layout(&edge_handle))
+          fprintf(stderr,
+                  "[!] The loaded bitstream predates the CRC32 hash register "
+                  "layout: --hashmode=crc32 may select another hash, and the "
+                  "CSV would still say crc32.\n");
         edge_extractor_set_hash_mode(&edge_handle, edge_hash_mode);
         {
           /* Confirm the write landed */
@@ -583,8 +587,8 @@ static void usage(char *argv0)
   fprintf(stderr,
           "  -o, --csv=PATH\t\tappend decoder/edge stats as a CSV row to "
           "PATH (default: disabled)\n");
-  fprintf(stderr, "  -g, --hashmode=MODE\t\tedge hash mode: none, fuzzsight or "
-                  "stalker (default %s)\n", edge_hash_mode_name(edge_hash_mode));
+  fprintf(stderr, "  -g, --hashmode=MODE\t\tedge hash mode: none or crc32 "
+                  "(default %s)\n", edge_hash_mode_name(edge_hash_mode));
   fprintf(stderr, "  -M, --mode=MODE\t\tfuzz (edge bitmap over the bitmap DMA) or "
                   "capture (raw TPIU frames into cstrace.bin, forces the ETR off) "
                   "(default %s)\n", run_mode_name(run_mode));
@@ -713,13 +717,11 @@ int main(int argc, char *argv[])
       case 'g':
         if (!strcmp(optarg, "none"))
           edge_hash_mode = EDGE_HASH_NONE;
-        else if (!strcmp(optarg, "fuzzsight"))
-          edge_hash_mode = EDGE_HASH_FUZZSIGHT;
-        else if (!strcmp(optarg, "stalker"))
-          edge_hash_mode = EDGE_HASH_STALKER;
+        else if (!strcmp(optarg, "crc32"))
+          edge_hash_mode = EDGE_HASH_CRC32;
         else {
           fprintf(stderr, "[!] Unknown hash mode '%s' "
-                          "(expected none, fuzzsight or stalker)\n", optarg);
+                          "(expected none or crc32)\n", optarg);
           exit(EXIT_FAILURE);
         }
         break;

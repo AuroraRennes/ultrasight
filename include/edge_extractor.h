@@ -13,7 +13,7 @@
 
 /* Register offsets */
 typedef enum {
-    EDGE_EXTRACTOR_CTRL        = 0x00,  // bit 0 = stats_reset, [2:1] = hash_mode, bit 3 = hash_mode_we
+    EDGE_EXTRACTOR_CTRL        = 0x00,  // bit 0 = stats_reset, bit 1 = hash_mode, bit 3 = hash_mode_we, read bits 7:4 = layout marker
     EDGE_EXTRACTOR_TOTAL_LO    = 0x04,  // edges_total, lower 32 bits
     EDGE_EXTRACTOR_TOTAL_HI    = 0x08,  // edges_total, upper 32 bits (latched at last LO read)
     EDGE_EXTRACTOR_OVERFLOW    = 0x0C,  // fifo_overflow_count
@@ -25,14 +25,18 @@ typedef enum {
 /* Control register bits */
 #define EDGE_EXTRACTOR_CTRL_STATS_RESET      (1 << 0)
 #define EDGE_EXTRACTOR_CTRL_HASH_MODE_SHIFT  1
-#define EDGE_EXTRACTOR_CTRL_HASH_MODE_MASK   (0x3 << EDGE_EXTRACTOR_CTRL_HASH_MODE_SHIFT)
+#define EDGE_EXTRACTOR_CTRL_HASH_MODE_MASK   (0x1 << EDGE_EXTRACTOR_CTRL_HASH_MODE_SHIFT)
 #define EDGE_EXTRACTOR_CTRL_HASH_MODE_WE     (1 << 3)
+/* Read-only, bits 7:4: layout marker, 1 on this register layout (bit 1 selects
+ * NONE or CRC32). Reads 0 on older bitstreams, where bits [2:1] meant something
+ * else (NONE/FUZZSIGHT/STALKER, or an XORMAT/AFL/CRC32 build). */
+#define EDGE_EXTRACTOR_CTRL_LAYOUT_SHIFT     4
+#define EDGE_EXTRACTOR_LAYOUT_NONE_CRC32     0x1
 
-/* Hash mode encoding for CTRL bits [2:1] (edge_extractor's hash_pkg.vhd) */
+/* Hash mode encoding for CTRL bit 1 (edge_extractor's hash_pkg.vhd) */
 typedef enum {
-    EDGE_HASH_NONE      = 0x0,  // passthrough, index = effective_addr
-    EDGE_HASH_FUZZSIGHT = 0x1,  // N-atom count XORed into address bits [63:48]
-    EDGE_HASH_STALKER   = 0x2,  // N-atom count added onto the address (RAID'24 Stalker)
+    EDGE_HASH_NONE  = 0x0,  // passthrough, index = effective_addr (debug)
+    EDGE_HASH_CRC32 = 0x1,  // IEEE CRC-32 over address and N, xor the previous edge rotated by 16 (reset default)
 } edge_hash_mode_t;
 
 typedef axi_regs_t edge_extractor_t;
@@ -56,11 +60,19 @@ static inline void edge_extractor_set_hash_mode(edge_extractor_t *handle, edge_h
                     ((mode << EDGE_EXTRACTOR_CTRL_HASH_MODE_SHIFT) & EDGE_EXTRACTOR_CTRL_HASH_MODE_MASK));
 }
 
-/* Read back the active hash mode from CTRL bits [2:1]. */
+/* Read back the active hash mode from CTRL bit 1. */
 static inline edge_hash_mode_t edge_extractor_get_hash_mode(edge_extractor_t *handle)
 {
     uint32_t ctrl = axi_regs_read(handle, EDGE_EXTRACTOR_CTRL);
     return (edge_hash_mode_t)((ctrl & EDGE_EXTRACTOR_CTRL_HASH_MODE_MASK) >> EDGE_EXTRACTOR_CTRL_HASH_MODE_SHIFT);
+}
+
+/* Nonzero if this bitstream has the NONE/CRC32 layout. Zero on an older one:
+ * check it before trusting edge_extractor_get_hash_mode() or selecting a mode. */
+static inline int edge_extractor_has_crc32_layout(edge_extractor_t *handle)
+{
+    uint32_t ctrl = axi_regs_read(handle, EDGE_EXTRACTOR_CTRL);
+    return ((ctrl >> EDGE_EXTRACTOR_CTRL_LAYOUT_SHIFT) & 0xF) == EDGE_EXTRACTOR_LAYOUT_NONE_CRC32;
 }
 
 /* Drop atom packets whose effective address is outside the decoder's trace

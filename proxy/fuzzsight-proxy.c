@@ -38,7 +38,7 @@
    One-time setup (before __afl_start_forkserver):
      - decoder_stats_open() AXI-Lite ETM statistics handle  - TODO: add an option to disable
      - edge_extractor_open() AXI-Lite edge statistics handle - TODO: add an option to disable
-     - edge_extractor_set_hash_mode() select FuzzSight edge hashing, once
+     - edge_extractor_set_hash_mode() select CRC32 edge hashing, once
        (must happen between execution sessions, so before the forkserver loop)
      - bitmap_dma_open()  udmabuf DMA handle
 
@@ -563,7 +563,10 @@ static int __afl_end_testcase(pid_t child_pid) {
     perror("[!] fuzzsight-proxy: edge_extractor_open");
   /* One-time hash mode select: must happen between execution sessions, so
      before the forkserver loop starts any tracing. */
-  edge_extractor_set_hash_mode(&g_edge, EDGE_HASH_FUZZSIGHT);
+  if (!edge_extractor_has_crc32_layout(&g_edge))
+    fprintf(stderr, "[!] fuzzsight-proxy: the loaded bitstream predates the "
+                    "CRC32 register layout, the hash mode select may pick another hash\n");
+  edge_extractor_set_hash_mode(&g_edge, EDGE_HASH_CRC32);
   if(decoder_axi_open(&g_dec))
     perror("[!] fuzzsight-proxy: decoder_axi_open");
   if (bitmap_dma_open(&g_dma, MAP_SIZE) < 0) {

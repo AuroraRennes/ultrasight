@@ -126,7 +126,7 @@ Root is required: the tool maps CoreSight configuration registers through `/dev/
 | `-v, --verbose[=INT]` | `0` | Verbosity. `>0` dumps the cross-trigger config, `>1` the ETM config. |
 | `-n, --no-trace` | off | Baseline mode: `ptrace` attach/detach only, no CoreSight setup. Useful for measuring the tool's own overhead. |
 | `-o, --csv=PATH` | disabled | Append one row of decoder / edge / decoder-AXI stats to a CSV. |
-| `-g, --hashmode=MODE` | `stalker` | Edge hash mode: `none`, `fuzzsight` or `stalker`. Only decides which index an edge maps to; edge counts are identical across modes. |
+| `-g, --hashmode=MODE` | `crc32` | Edge hash mode: `none` (raw address, debug) or `crc32`. Only decides which index an edge maps to; edge counts are identical across modes. |
 
 Boolean options take an explicit argument (`--singlecpu=1`), except `--export`, `--fetcher`,
 `--ksight` and `--no-trace`, which are flags.
