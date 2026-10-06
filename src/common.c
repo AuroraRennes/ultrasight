@@ -81,6 +81,8 @@ struct cs_devices_t devices;
 /* Arguments */
 const char *udmabuf_name = NULL; /* -u; NULL: env, then UDMABUF_ETR_NAME */
 int trace_cpu = -1;
+/* Set by the proxy once the forkserver is pinned, children inherit it */
+bool affinity_inherited = false;
 bool export_config = false;
 bool fetcher_on = false;
 bool no_trace = false;
@@ -861,13 +863,13 @@ int start_trace(pid_t pid, bool use_pid_trace)
 {
   int ret;
   /* Set the cpu affinity, binding the process to the corresponding cpu */
-  if ((ret = set_cpu_affinity(trace_cpu, pid)) < 0) {
+  if (!affinity_inherited && (ret = set_cpu_affinity(trace_cpu, pid)) < 0) {
     fprintf(stderr, "[!] set_cpu_affinity() failed\n");
     goto exit;
   }
 
-  /* Allocate the trace buffer */
-  alloc_trace_buf();
+  /* Allocate the trace buffer once, not on every start */
+  if (!trace_buf) alloc_trace_buf();
 
   /* Allocate the ksight tag events buffer */
   if (ksight_on) {

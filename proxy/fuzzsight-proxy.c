@@ -80,6 +80,7 @@
 #include "decoder_axi.h"
 #include "edge_extractor.h"
 #include "common.h"
+#include "utils.h"
 #include "timing.h"
 
 /* Inner pipe fds used to talk to libforksrv inside the target.
@@ -138,6 +139,7 @@ extern char          *board_name;
 extern unsigned char *trace_bitmap;
 extern int            trace_bitmap_size;
 extern int            trace_cpu;
+extern bool           affinity_inherited;
 
 /* --------------------------------------------------------------------------
  * AFL++ boilerplate
@@ -566,6 +568,11 @@ static int __afl_end_testcase(pid_t child_pid) {
 
   /* AFL++ protocol init */
   __afl_start_forkserver(target_argv);
+
+  /* Pin the forkserver once: every forked target inherits the affinity, so
+     start_trace() need not call sched_setaffinity() per exec */
+  if (set_cpu_affinity(trace_cpu, fsrv_pid) == 0)
+    affinity_inherited = true;
 
   /* Main fuzzing loop */
   pid_t child;
