@@ -88,6 +88,7 @@
 #define AFL_FUZZSIGHT_FORKSRV_FD (FORKSRV_FD - 3)   /* 195 */
 
 #define AFL_FUZZSIGHT_PROXY_NAME "afl-fuzzsight-proxy"
+#define CS_PASS_ENV_MAX 16
 
 
 /* --------------------------------------------------------------------------
@@ -275,7 +276,27 @@ static void __afl_start_forkserver(char **target_argv) {
     if (cs_ld_lib)
       strncat(ld_lib, cs_ld_lib, sizeof(ld_lib) - strlen(ld_lib) - 1);
 
-    char *envp[] = { "__CS_PROXY=1", ld_preload, ld_lib, NULL };
+    /* The target gets a fresh environment. CS_PASS_ENV names the variables
+       (colon-separated) to carry over from ours, e.g. a data directory the
+       target cannot be pointed at through its arguments. */
+    char *envp[3 + CS_PASS_ENV_MAX + 1] = { "__CS_PROXY=1", ld_preload, ld_lib, NULL };
+    char *cs_pass_env = getenv("CS_PASS_ENV");
+    if (cs_pass_env) {
+      int n = 3;
+      char *names = strdup(cs_pass_env);
+      for (char *name = strtok(names, ":"); name; name = strtok(NULL, ":")) {
+        char *value = getenv(name);
+        if (!value) continue;
+        if (n - 3 == CS_PASS_ENV_MAX) {
+          fprintf(stderr, "[!] fuzzsight-proxy child: CS_PASS_ENV: too many variables\n");
+          exit(EXIT_FAILURE);
+        }
+        size_t len = strlen(name) + strlen(value) + 2;
+        envp[n] = malloc(len);
+        snprintf(envp[n++], len, "%s=%s", name, value);
+      }
+      envp[n] = NULL;
+    }
 
     execve(target_argv[0], target_argv, envp);
     perror("[!] fuzzsight-proxy child: execve failed");
