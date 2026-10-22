@@ -9,3 +9,4 @@ tests/*
 !tests/*.c
 proxy/fuzzsight-proxy
 stats/
+proxy/libforksrv/libforksrv.a
